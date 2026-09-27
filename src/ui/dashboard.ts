@@ -345,18 +345,18 @@ export class Dashboard {
         <label>Starting balance (USDT, applies on reset)
           <input type="number" min="10" data-set="startBalance" value="${s.startBalance}"></label>
         <label>Max risk per trade (% of bank lost at stop)
-          <input type="number" step="0.1" min="0.1" max="10" data-set="hawk.maxRiskPerTrade" value="${s.hawk.maxRiskPerTrade * 100}"></label>
+          <input type="number" step="0.1" min="0.1" max="10" data-set="hawk.maxRiskPerTrade" value="${pctInput(s.hawk.maxRiskPerTrade)}"></label>
         <label>Max leverage (notional / equity)
           <input type="number" step="0.5" min="1" max="10" data-set="hawk.maxLeverage" value="${s.hawk.maxLeverage}"></label>
       </section>
       <section class="card form">
         <h3>SENTRY · gate</h3>
         <label>Min signal confidence (%)
-          <input type="number" min="0" max="100" data-set="sentry.minConfidence" value="${s.sentry.minConfidence * 100}"></label>
+          <input type="number" min="0" max="100" data-set="sentry.minConfidence" value="${pctInput(s.sentry.minConfidence)}"></label>
         <label>Max open positions
           <input type="number" min="1" max="10" data-set="sentry.maxOpen" value="${s.sentry.maxOpen}"></label>
         <label>Daily loss limit (% of day-start equity)
-          <input type="number" step="0.5" min="0.5" max="50" data-set="sentry.dailyLossLimit" value="${s.sentry.dailyLossLimit * 100}"></label>
+          <input type="number" step="0.5" min="0.5" max="50" data-set="sentry.dailyLossLimit" value="${pctInput(s.sentry.dailyLossLimit)}"></label>
         <label>Cooldown after a loss (bars)
           <input type="number" min="0" max="240" data-set="sentry.cooldownBars" value="${s.sentry.cooldownBars}"></label>
       </section>
@@ -470,6 +470,9 @@ export class Dashboard {
 }
 
 const DEFAULT_POP = 40;
+
+/** Fraction → percent for a form field, without float noise like 55.00000000000001. */
+const pctInput = (x: number) => String(Math.round(x * 10000) / 100);
 
 function kpi(label: string, value: string, sub: string): string {
   return `<div class="kpi"><small>${label}</small><b>${value}</b><span>${sub}</span></div>`;
