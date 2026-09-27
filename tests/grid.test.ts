@@ -92,3 +92,28 @@ describe('Engine in GRID mode', () => {
     expect(engine.balance).toBeCloseTo(engine.startBalance + closed - inv.cost * engine.settings.grid.maker, 6);
   }, 60_000);
 });
+
+describe('GRID stability on calm, BTC-like replay', () => {
+  it('arms once and keeps trading instead of flip-flopping on marginal re-validations', async () => {
+    const { vi } = await import('vitest');
+    const { Engine, DEFAULT_SETTINGS } = await import('../src/core/engine');
+    let c: Candle[] = [];
+    await new SimFeed(1000, 1, 3000, 0.3).start(['BTCUSDT'], { onHistory: (_s, x) => (c = x), onCandle() {}, onStatus() {} });
+    vi.stubGlobal('fetch', async (url: string) => {
+      const end = Number(new URL(url).searchParams.get('endTime') ?? Infinity);
+      const rows = c.filter((k) => k.t <= end).slice(-1000);
+      return new Response(JSON.stringify(rows.map((k) => [k.t, `${k.o}`, `${k.h}`, `${k.l}`, `${k.c}`, '0', 0, `${k.v}`])));
+    });
+    vi.useFakeTimers();
+    const e = new Engine({ ...DEFAULT_SETTINGS, feed: 'replay', strategy: 'grid', simBarMs: 400, symbols: ['BTCUSDT'] });
+    await e.start();
+    await vi.advanceTimersByTimeAsync(400 * 1700);
+    e.stop();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    const count = (re: RegExp) => e.log.filter((l) => re.test(l.text)).length;
+    expect(count(/grid armed/)).toBeGreaterThanOrEqual(1);
+    expect(count(/stood down/)).toBeLessThanOrEqual(1);
+    expect(e.gridRoundTrips).toBeGreaterThan(10);
+  }, 120_000);
+});

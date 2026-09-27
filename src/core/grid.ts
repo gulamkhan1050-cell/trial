@@ -279,7 +279,8 @@ export function scoreGrid(g: GridGenome, candles: Candle[], fees: GridFees): Gri
 
 /** `slack` lets a sitting champion keep its crown while it hovers around break-even (hysteresis). */
 export function gridPasses(s: GridScored, slack = 0): boolean {
-  return s.train.profit > -slack && s.test.profit > -slack && s.test.roundTrips >= 3 && s.test.maxDrawdown < 0.08;
+  const minTrips = slack > 0 ? 1 : 3;
+  return s.train.profit > -slack && s.test.profit > -slack && s.test.roundTrips >= minTrips && s.test.maxDrawdown < 0.08;
 }
 
 const rankOf = (s: GridScored) => (s.train.fitness < 0 || s.test.fitness < 0 ? Math.min(s.train.fitness, s.test.fitness) : 0.4 * s.train.fitness + 0.6 * s.test.fitness);
@@ -288,7 +289,7 @@ export function stepGridForge(f: GridForge, candles: Candle[], fees: GridFees, r
   const scored = f.population.map((g) => scoreGrid(g, candles, fees)).sort((a, b) => rankOf(b) - rankOf(a));
   const passed = scored.filter((s) => gridPasses(s));
   let champion = f.champion ? scoreGrid(f.champion.genome, candles, fees) : null;
-  if (champion && !gridPasses(champion, 0.002)) champion = null;
+  if (champion && !gridPasses(champion, 0.003)) champion = null;
   // A challenger must clearly beat the incumbent to take over, so the live grid isn't reshuffled on noise.
   if (passed[0] && (!champion || rankOf(passed[0]) > rankOf(champion) * 1.2 + 0.001)) champion = passed[0];
 

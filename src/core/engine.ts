@@ -59,8 +59,12 @@ export interface GateView {
   at: number;
 }
 
-const HISTORY_KEEP = 800;
+const HISTORY_KEEP = 1600;
 const EVOLVE_WINDOW = 600;
+/** Grids need longer samples: round trips are small and noisy, so judge on up to a day of 1m bars. */
+const GRID_WINDOW = 1440;
+/** Bars a running grid keeps its genome after FORGE retires it, before standing down. */
+const GRID_GRACE = 60;
 
 export class Engine {
   settings: Settings;
@@ -87,6 +91,7 @@ export class Engine {
   gridRoundTrips = 0;
   private gridLast = 0;
   private gridWait = 0;
+  private gridOrphanBars = 0;
 
   private feed: MarketFeed | null = null;
   private clock = 0;
@@ -128,6 +133,7 @@ export class Engine {
     this.clock = 0;
     this.gridLast = 0;
     this.gridWait = 0;
+    this.gridOrphanBars = 0;
     this.gridForge = newGridForge(this.rand);
     if (this.gridMode() && !this.settings.symbols.includes(this.settings.grid.symbol))
       this.settings = { ...this.settings, symbols: [this.settings.grid.symbol, ...this.settings.symbols] };
@@ -546,10 +552,12 @@ export class Engine {
     const price = s.candles[s.candles.length - 1].c;
     const flat = !bot || bot.inventory().qty === 0;
 
-    // FORGE retired the strategy: stand down once nothing is held.
-    if (bot?.armed && !champ && flat) {
+    // FORGE retired the strategy: keep working the ladder for a grace period (a retirement is
+    // often noise at the pass/fail edge), then stand down once nothing is held.
+    this.gridOrphanBars = champ ? 0 : this.gridOrphanBars + 1;
+    if (bot?.armed && !champ && flat && this.gridOrphanBars >= GRID_GRACE) {
       bot.disarm();
-      this.say('SENTRY', 'veto', `✕ ${s.symbol} grid stood down — its strategy no longer passes out-of-sample`);
+      this.say('SENTRY', 'veto', `✕ ${s.symbol} grid stood down — no grid has passed out-of-sample for ${GRID_GRACE} bars`);
     }
     // Swap in a better genome only while holding nothing.
     if (bot?.armed && champ && champ.genome.id !== bot.genome.id && flat) {
@@ -600,7 +608,7 @@ export class Engine {
     const before = this.gridForge.champion?.genome.id;
     const t0 = performance.now();
     this.agents.FORGE = { busy: true, text: `grid gen ${this.gridForge.generation + 1}`, at: Date.now() };
-    this.gridForge = stepGridForge(this.gridForge, s.candles.slice(-EVOLVE_WINDOW - 200), this.gridFees(), this.rand);
+    this.gridForge = stepGridForge(this.gridForge, s.candles.slice(-GRID_WINDOW), this.gridFees(), this.rand);
     const f = this.gridForge;
     const c = f.champion;
     if (c && c.genome.id !== before) {
@@ -614,7 +622,8 @@ export class Engine {
     } else if (!c && f.generation % 10 === 0) {
       this.say('FORGE', 'warn', `${s.symbol} grid gen ${f.generation}: no grid beats fees out-of-sample yet — waiting`);
     }
-    this.scheduleForge(f.generation < 12 ? Math.max(30, performance.now() - t0) : 3000);
+    // After warm-up, re-judge every ~10s: often enough to adapt, slow enough not to churn on noise.
+    this.scheduleForge(f.generation < 12 ? Math.max(30, performance.now() - t0) : 10_000);
     this.emit();
   }
 

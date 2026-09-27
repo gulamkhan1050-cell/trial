@@ -108,7 +108,7 @@ export class ReplayFeed implements MarketFeed {
   constructor(
     private barMs = 1500,
     private pages = 3, // 1000 bars each ≈ 50 hours of 1m data
-    private warmup = 600,
+    private warmup = 1200, // first 20h go to FORGE as history; the rest (~30h) is replayed
     private opt: BinanceFeedOptions = BINANCE_PUBLIC,
   ) {}
 
@@ -215,10 +215,11 @@ export class SimFeed implements MarketFeed {
     private barMs = 2000,
     private seed = Date.now() % 1e9,
     private history = 600,
+    private volScale = 1, // < 1 gives calmer, BTC-like minute bars
   ) {}
 
   async start(symbols: string[], h: FeedHandlers): Promise<void> {
-    const models = symbols.map((s, i) => new SimModel(s, SIM_BASE[s] ?? 100, this.seed + i * 7919));
+    const models = symbols.map((s, i) => new SimModel(s, SIM_BASE[s] ?? 100, this.seed + i * 7919, this.volScale));
     const now = Date.now();
     const barSpan = 60_000;
     for (const m of models) {
@@ -263,6 +264,7 @@ class SimModel {
     readonly symbol: string,
     base: number,
     seed: number,
+    private volScale = 1,
   ) {
     this.rand = mulberry32(seed);
     this.price = base * (0.9 + this.rand() * 0.2);
@@ -273,8 +275,8 @@ class SimModel {
     this.regimeLeft = 40 + Math.floor(this.rand() * 160);
     const r = this.rand();
     if (r < 0.35) this.drift = 0;
-    else this.drift = (this.rand() < 0.5 ? -1 : 1) * (0.0002 + this.rand() * 0.0006);
-    this.vol = 0.0008 + this.rand() * 0.002;
+    else this.drift = (this.rand() < 0.5 ? -1 : 1) * (0.0002 + this.rand() * 0.0006) * this.volScale;
+    this.vol = (0.0008 + this.rand() * 0.002) * this.volScale;
   }
 
   open(t: number): Candle {
