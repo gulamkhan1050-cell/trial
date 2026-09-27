@@ -1,6 +1,6 @@
 import { unrealized } from '../agents/hawk';
 import { DEFAULT_SENTRY } from '../agents/sentry';
-import { type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
+import { DEFAULT_SETTINGS, type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
 import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
@@ -333,11 +333,11 @@ export class Dashboard {
       <section class="card">
         <h3>Presets <span class="dim">paper only</span></h3>
         <div class="presets">
-          <button class="ghost" data-preset="fast">⚡ Fast — 1s candles, looser gate</button>
+          <button class="ghost" data-preset="fast">⚡ Fast — 15 markets, looser gate</button>
           <button class="ghost" data-preset="standard">Standard — 1m candles, default gate</button>
         </div>
-        <p class="dim small">Fast trades within minutes on live prices, like the simulator. Expect many small trades and a big share lost to fees —
-        a good way to watch the agents, a bad way to judge a strategy.</p>
+        <p class="dim small">Fast watches 15 liquid coins on 1-minute candles with a looser gate, so setups come several times more often.
+        Faster candles don't help: a 1-second move is far smaller than exchange fees, so no strategy survives FORGE there.</p>
       </section>
       <section class="card form">
         <h3>Market data</h3>
@@ -348,7 +348,7 @@ export class Dashboard {
           </select></label>
         <label>Live candle timeframe
           <select data-set="interval">
-            <option value="1s" ${s.interval === '1s' ? 'selected' : ''}>1 second (fast — many trades)</option>
+            <option value="1s" ${s.interval === '1s' ? 'selected' : ''}>1 second (experimental — fees usually exceed moves)</option>
             <option value="1m" ${s.interval === '1m' ? 'selected' : ''}>1 minute (standard)</option>
             <option value="5m" ${s.interval === '5m' ? 'selected' : ''}>5 minutes (slow — fewer, larger moves)</option>
           </select></label>
@@ -496,10 +496,11 @@ const DEFAULT_POP = 40;
 
 const PRESETS: Record<string, Partial<Settings>> = {
   fast: {
-    interval: '1s',
-    sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 30, maxOpen: 5 },
+    interval: '1m',
+    symbols: [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'],
+    sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 5, maxOpen: 5 },
   },
-  standard: { interval: '1m', sentry: { ...DEFAULT_SENTRY } },
+  standard: { interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
 };
 
 /** Fraction → percent for a form field, without float noise like 55.00000000000001. */

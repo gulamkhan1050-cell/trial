@@ -416,6 +416,14 @@ export class Engine {
         );
       } else if (!champ && before) {
         this.say('FORGE', 'warn', `${s.symbol} champion failed re-validation — retired, symbol benched`);
+      } else if (!champ && s.evolver.generation % 10 === 0) {
+        // Say why nothing is trading instead of staying silent.
+        const last = s.evolver.history[s.evolver.history.length - 1];
+        this.say(
+          'FORGE',
+          'warn',
+          `${s.symbol} gen ${s.evolver.generation}: no strategy beats fees out-of-sample yet (${last?.passedGate ?? 0}/${last?.backtested ?? 0} passed) — benched`,
+        );
       }
       this.saveChampions();
       // Warm-up phase evolves fast; afterwards FORGE idles between generations to save battery.
