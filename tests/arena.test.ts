@@ -51,3 +51,42 @@ describe('Arena', () => {
     expect(out.results[0].equity.at(-1)!.t).toBe(src.BTCUSDT.at(-2)!.t);
   }, 120_000);
 });
+
+describe('crash guard', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('loses less than an unguarded grid when every market dumps together', async () => {
+    const { gridVariants } = await import('../src/core/arena');
+    const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+    const n = 1200 + 1440 + 1;
+    const t0 = Date.UTC(2026, 0, 1);
+    // Range-bound chop (grids thrive), then at bar 1900 a 6% market-wide dump over 30 bars.
+    const series = (phase: number) =>
+      Array.from({ length: n }, (_, i) => {
+        const drop = i < 1900 ? 1 : i < 1930 ? 1 - 0.06 * ((i - 1900) / 30) : 0.94;
+        const px = (i: number) => 100 * (1 + 0.006 * Math.sin(i / 7 + phase) + 0.003 * Math.sin(i / 2.3 + phase * 2)) * drop;
+        const o = px(i - 1);
+        const c = px(i);
+        return [t0 + i * 60_000, `${o}`, `${Math.max(o, c) * 1.0005}`, `${Math.min(o, c) * 0.9995}`, `${c}`, '0', 0, '500000'] as const;
+      });
+    const data: Record<string, ReturnType<typeof series>> = { BTCUSDT: series(0), ETHUSDT: series(1), SOLUSDT: series(2) };
+    vi.stubGlobal('fetch', async (url: string) => {
+      const u = new URL(url);
+      const end = Number(u.searchParams.get('endTime') ?? Infinity);
+      return new Response(JSON.stringify(data[u.searchParams.get('symbol')!].filter((k) => k[0] <= end).slice(-1000)));
+    });
+    const all = gridVariants(DEFAULT_SETTINGS);
+    const pick = (name: string) => all.find((c) => c.name === name)!;
+    const out = await runArena({
+      symbols,
+      days: 1,
+      source: 'real',
+      base: DEFAULT_SETTINGS,
+      contestants: [pick('MICRO 3× · no guard'), pick('MICRO 3× · crash guard')],
+    });
+    const [noGuard, guard] = out.results;
+    expect(guard.trades).toBeGreaterThan(20); // it did trade the chop
+    expect(guard.final).toBeGreaterThan(noGuard.final);
+    expect(guard.maxDrawdown).toBeLessThan(noGuard.maxDrawdown);
+  }, 180_000);
+});

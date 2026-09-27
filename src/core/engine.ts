@@ -36,7 +36,8 @@ export interface Settings {
   startBalance: number;
   symbols: string[];
   strategy: 'agents' | 'grid'; // directional agents, or the GRID micro-trading engine
-  grid: { maker: number; taker: number; leverage: number }; // a grid runs on every market in `symbols`
+  // A grid runs on every market in `symbols`. crashGuard flattens all grids when most markets dump together.
+  grid: { maker: number; taker: number; leverage: number; crashGuard: boolean };
   sentry: SentryConfig;
   hawk: HawkConfig;
 }
@@ -50,7 +51,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sentry: DEFAULT_SENTRY,
   hawk: DEFAULT_HAWK,
   strategy: 'agents',
-  grid: { ...DEFAULT_GRID_FEES, leverage: 1 },
+  grid: { ...DEFAULT_GRID_FEES, leverage: 1, crashGuard: true },
 };
 
 export interface SymbolState {
@@ -79,6 +80,10 @@ const HISTORY_KEEP = 1600;
 const EVOLVE_WINDOW = 600;
 /** Grids need longer samples: round trips are small and noisy, so judge on up to a day of 1m bars. */
 const GRID_WINDOW = 1440;
+/** Crash guard: fraction drop over a window that counts a market as dumping, and the pause after. */
+const CRASH_DROP = 0.01;
+const CRASH_BARS = 15;
+const CRASH_PAUSE = 60;
 /** Bars a running grid keeps its genome after FORGE retires it, before standing down. */
 const GRID_GRACE = 60;
 
@@ -108,6 +113,8 @@ export class Engine {
   /** One grid per market: its own FORGE population, ladder and SENTRY state. */
   grids = new Map<string, GridSlot>();
   private gridBars = 0;
+  /** Bars left in a market-wide pause after the crash guard fired. */
+  private stressWait = 0;
 
   private feed: MarketFeed | null = null;
   private clock = 0;
@@ -275,6 +282,7 @@ export class Engine {
     this.winCount = 0;
     this.lastGate = null;
     this.grids = new Map();
+    this.stressWait = 0;
     this.rollDay();
   }
 
@@ -616,7 +624,10 @@ export class Engine {
 
   private gridBarClose(g: GridSlot, s: SymbolState) {
     this.rollDay();
-    if (s.symbol === this.settings.symbols[0]) this.gridHeartbeat();
+    if (s.symbol === this.settings.symbols[0]) {
+      this.gridHeartbeat();
+      this.crashGuard();
+    }
     if (g.wait > 0) g.wait--;
     const champ = g.forge.champion;
     const bot = g.bot;
@@ -644,6 +655,7 @@ export class Engine {
     // Not armed: SENTRY decides whether this market is safe to lay a grid.
     let why = '';
     if (!champ) why = 'no grid survived FORGE yet';
+    else if (this.stressWait > 0) why = `crash guard: market-wide sell-off, paused ${this.stressWait} more bars`;
     else if (g.wait > 0) why = `cooldown ${g.wait} bars after stop`;
     else if (this.dayPnl <= -this.settings.sentry.dailyLossLimit * this.dayStartEquity) why = 'daily loss limit hit';
     else if (!gridSafe(s.candles, s.candles.length - 1, champ.genome)) why = 'selling off too hard for a grid';
@@ -665,6 +677,39 @@ export class Engine {
       'SENTRY',
       'pass',
       `✓ ${s.symbol} grid armed: ${genome.levels} buys every ${(genome.spacing * 100).toFixed(2)}% under ${fmtPrice(price)} · $${capital.toFixed(0)}`,
+    );
+  }
+
+  /**
+   * Grids on correlated coins all get stopped out together in a market-wide dump. When most
+   * markets fall more than CRASH_DROP over CRASH_BARS, sell every grid's inventory now (before the
+   * deeper per-grid stops) and pause laying ladders for CRASH_PAUSE bars.
+   */
+  private crashGuard() {
+    if (this.stressWait > 0) this.stressWait--;
+    if (!this.settings.grid.crashGuard || this.stressWait > 0) return;
+    let down = 0;
+    let n = 0;
+    for (const sym of this.grids.keys()) {
+      const c = this.symbols.get(sym)?.candles;
+      if (!c || c.length <= CRASH_BARS) continue;
+      n++;
+      if (c[c.length - 1].c / c[c.length - 1 - CRASH_BARS].c - 1 <= -CRASH_DROP) down++;
+    }
+    if (n < 2 || down / n < 0.5) return;
+    this.stressWait = CRASH_PAUSE;
+    let saved = 0;
+    for (const g of this.grids.values()) {
+      if (!g.bot?.armed) continue;
+      if (g.bot.inventory().qty > 0) {
+        this.onGridFill(g, g.bot.liquidate(this.price(g.symbol)), 'grid crash guard');
+        saved++;
+      } else g.bot.disarm();
+    }
+    this.say(
+      'SENTRY',
+      'veto',
+      `✕ crash guard: ${down}/${n} markets down >${(CRASH_DROP * 100).toFixed(1)}% in ${CRASH_BARS} bars — ${saved} grids flattened, all paused ${CRASH_PAUSE} bars`,
     );
   }
 

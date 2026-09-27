@@ -5,7 +5,7 @@ import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, kellyChart, lineChart } from './charts';
-import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, runArena } from '../core/arena';
+import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, gridVariants, runArena } from '../core/arena';
 
 type Tab = 'desk' | 'grid' | 'arena' | 'markets' | 'forge' | 'log' | 'setup';
 
@@ -50,7 +50,8 @@ export class Dashboard {
     days: number;
     wide: boolean;
     leverage: number;
-  } = { running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, wide: false, leverage: 3 };
+    variants: boolean;
+  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, wide: false, leverage: 3 };
 
   constructor(
     private root: HTMLElement,
@@ -323,7 +324,9 @@ export class Dashboard {
             <select data-arena="days">${opt(1, a.days, 'Last 1 day')}${opt(3, a.days, 'Last 3 days')}${opt(7, a.days, 'Last 7 days')}</select></label>
           <label>Markets
             <select data-arena="wide">${opt('0', a.wide ? '1' : '0', '6 majors')}${opt('1', a.wide ? '1' : '0', '15 coins')}</select></label>
-          <label>Grid leverage
+          <label>Contestants
+            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 3 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
+          <label>Grid leverage (Normal vs Micro)
             <select data-arena="leverage">${opt(1, a.leverage, '1×')}${opt(2, a.leverage, '2×')}${opt(3, a.leverage, '3×')}</select></label>
         </div>
         <button class="run-arena" data-act="arena">${a.running ? '■ Cancel' : '▶ Run arena'}</button>
@@ -360,16 +363,17 @@ export class Dashboard {
             : ''
         }
         <canvas id="c-arena" class="chart tall"></canvas>
-        <p class="legend"><i style="background:var(--scout)"></i>${esc(a.results[0].name)} <i style="background:var(--hawk)"></i>${esc(a.results[1]?.name ?? '')}</p>
+        <p class="legend">${a.results.map((r, i) => `<i style="background:var(${ARENA_COLORS[i]})"></i>${esc(r.name)}`).join(' ')}</p>
       </section>
       <div class="split">${a.results
         .map(
-          (r, i) => `<section class="card"><h3><span style="color:var(${i ? '--hawk' : '--scout'})">${esc(r.name)}</span></h3>
+          (r, i) => `<section class="card"><h3><span style="color:var(${ARENA_COLORS[i]})">${esc(r.name)}</span></h3>
             <p class="big ${cls(r.final - start)}">${usd(r.final)} <small>${signed(r.final - start)} · ${pct((r.final - start) / start, 1)}</small></p>
             <div class="stats">
               ${stat('Trades', r.trades.toLocaleString())}
               ${stat('Win rate', pct(r.winRate))}
               ${stat('Max drawdown', pct(r.maxDrawdown, 1))}
+              ${stat('Peak', signed(r.peak - start))}
               ${stat('Best day', signed(r.bestDay))}
               ${stat('Worst day', signed(r.worstDay))}
               ${stat('Per day', signed((r.final - start) / Math.max(1, r.equity.length ? (r.equity[r.equity.length - 1].t - r.equity[0].t) / 86_400_000 : 1)))}
@@ -382,7 +386,7 @@ export class Dashboard {
     if (c && a.results) {
       lineChart(
         c,
-        a.results.map((r, i) => ({ values: r.equity.map((p) => p.v), color: i ? '--hawk' : '--scout', width: 2 })),
+        a.results.map((r, i) => ({ values: r.equity.map((p) => p.v), color: ARENA_COLORS[i], width: 2 })),
         (v) => `$${Math.round(v).toLocaleString()}`,
         a.results[0].start,
       );
@@ -408,7 +412,7 @@ export class Dashboard {
         days: a.days,
         source: a.source,
         base: { ...base, grid: { ...base.grid, leverage: a.leverage } },
-        contestants: ARENA_CONTESTANTS,
+        contestants: a.variants ? gridVariants(base) : ARENA_CONTESTANTS,
         signal: a.signal,
         onProgress: (p) => {
           a.progress = p;
@@ -674,6 +678,7 @@ export class Dashboard {
       if (ak === 'days') a.days = Number(el.value);
       if (ak === 'wide') a.wide = el.value === '1';
       if (ak === 'leverage') a.leverage = Number(el.value);
+      if (ak === 'variants') a.variants = el.value === '1';
       return;
     }
     const key = el.dataset.set;
@@ -777,6 +782,7 @@ export class Dashboard {
 }
 
 const DEFAULT_POP = 40;
+const ARENA_COLORS = ['--scout', '--hawk', '--forge', '--warn', '--down'];
 
 const WIDE_MARKETS = [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'];
 

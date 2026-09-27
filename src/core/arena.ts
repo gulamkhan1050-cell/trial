@@ -21,6 +21,7 @@ export interface ArenaResult {
   trades: number;
   winRate: number;
   maxDrawdown: number; // fraction of peak
+  peak: number; // highest equity reached
   bestDay: number;
   worstDay: number;
 }
@@ -176,6 +177,7 @@ function summarize(name: string, e: Engine, equity: { t: number; v: number }[]):
     trades: e.tradeCount,
     winRate: e.tradeCount ? e.winCount / e.tradeCount : 0,
     maxDrawdown: maxDd,
+    peak,
     bestDay: days.length ? Math.max(...days) : 0,
     worstDay: days.length ? Math.min(...days) : 0,
   };
@@ -192,5 +194,16 @@ export const ARENA_CONTESTANTS: Contestant[] = [
   { name: 'NORMAL · directional agents', patch: { strategy: 'agents' } },
   { name: 'MICRO · grid on every market', patch: { strategy: 'grid' } },
 ];
+
+/** Grid variants on the same data, plus NORMAL as the baseline. */
+export function gridVariants(base: Settings): Contestant[] {
+  const g = base.grid;
+  return [
+    { name: 'NORMAL · directional', patch: { strategy: 'agents' } },
+    { name: 'MICRO 1× · crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 1, crashGuard: true } } },
+    { name: 'MICRO 3× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false } } },
+    { name: 'MICRO 3× · crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true } } },
+  ];
+}
 
 export { DEFAULT_SETTINGS };
