@@ -1,0 +1,182 @@
+import { describe, expect, it } from 'vitest';
+import { LiveGrid, type LiveCandidate, type LiveHost, DEFAULT_LIVE } from '../src/exchange/liveGrid';
+import { MockExchange } from '../src/exchange/mock';
+import type { GridGenome } from '../src/core/grid';
+
+const RULES = {
+  DOGEUSDT: { symbol: 'DOGEUSDT', tickSize: 0.00001, stepSize: 1, minQty: 1, minNotional: 5 },
+  XRPUSDT: { symbol: 'XRPUSDT', tickSize: 0.0001, stepSize: 0.1, minQty: 0.1, minNotional: 5 },
+  BTCUSDT: { symbol: 'BTCUSDT', tickSize: 0.1, stepSize: 0.001, minQty: 0.001, minNotional: 100 },
+};
+const G: GridGenome = { id: 'g1', spacing: 0.01, levels: 5, stop: 0.02 };
+
+function setup(cands: LiveCandidate[] = [{ symbol: 'DOGEUSDT', genome: G, score: 0.05 }]) {
+  const ex = new MockExchange(RULES, 100);
+  const logs: string[] = [];
+  const state = { stressed: false, cands };
+  const host: LiveHost = {
+    candidates: () => state.cands,
+    stressed: () => state.stressed,
+    log: (_k, t) => logs.push(t),
+  };
+  let now = 1_000_000;
+  const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, leverage: 3, maxCoins: 5 }, Object.keys(RULES), () => now);
+  return { ex, live, logs, state, advance: (ms: number) => (now += ms) };
+}
+
+describe('LiveGrid on a mock exchange', () => {
+  it('arms a coin with post-only buys sized to the budget and exchange minimums', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    const coin = live.coins.get('DOGEUSDT')!;
+    expect(coin.levels).toHaveLength(5);
+    expect(ex.calls).toContain('setup DOGEUSDT 3x');
+    const open = await ex.openOrders();
+    expect(open).toHaveLength(5);
+    // $100 × 3 / 5 coins = $60 per coin, 5 levels ≈ $12 each, all ≥ the $5 minimum.
+    for (const o of open) {
+      expect(o.side).toBe('BUY');
+      expect(o.price).toBeLessThan(0.1);
+      expect(o.price * o.origQty).toBeGreaterThanOrEqual(5);
+      expect(o.price * o.origQty).toBeLessThanOrEqual(12.5);
+    }
+  });
+
+  it('flips a filled buy into a take-profit and books the round trip when it sells', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    const walletBefore = ex.wallet;
+    ex.setPrice('DOGEUSDT', 0.0985); // trades through L1 at 0.099
+    await live.tick();
+    const l1 = live.coins.get('DOGEUSDT')!.levels[0];
+    expect(l1.side).toBe('sell');
+    expect(l1.price).toBeCloseTo(0.09999, 5);
+    expect((await ex.openOrders()).some((o) => o.side === 'SELL')).toBe(true);
+    ex.setPrice('DOGEUSDT', 0.1); // take-profit fills
+    await live.tick();
+    expect(live.roundTrips).toBe(1);
+    expect(live.realized).toBeGreaterThan(0);
+    expect(l1.side).toBe('buy');
+    expect(ex.wallet).toBeGreaterThan(walletBefore);
+    expect(ex.positions.DOGEUSDT.qty).toBe(0);
+  });
+
+  it('never places a buy at or above the market (post-only would be rejected)', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985);
+    await live.tick(); // L1 bought; L2 (0.098) still below market
+    const buys = (await ex.openOrders()).filter((o) => o.side === 'BUY');
+    for (const o of buys) expect(o.price).toBeLessThan(0.0985);
+  });
+
+  it('stops out below the ladder: closes the position, cancels orders, cools the coin down', async () => {
+    const { ex, live, advance } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0935); // fills all 5 buys (lowest 0.095), stop at 0.0931
+    await live.tick();
+    expect(ex.positions.DOGEUSDT.qty).toBeGreaterThan(0);
+    ex.setPrice('DOGEUSDT', 0.093);
+    await live.tick();
+    expect(ex.positions.DOGEUSDT.qty).toBe(0);
+    expect(live.coins.has('DOGEUSDT')).toBe(false);
+    expect(await ex.openOrders()).toHaveLength(0);
+    // Cooldown: not re-armed on the next tick…
+    await live.tick();
+    expect(live.coins.has('DOGEUSDT')).toBe(false);
+    // …but eligible again after it expires.
+    advance(DEFAULT_LIVE.cooldownMs + 1);
+    await live.tick();
+    expect(live.coins.has('DOGEUSDT')).toBe(true);
+  });
+
+  it('keeps an exchange-side stop while holding and removes it when flat', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985);
+    await live.tick();
+    expect(ex.stops.size).toBe(1);
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.tick();
+    expect(ex.stops.size).toBe(0);
+  });
+
+  it('skips coins whose exchange minimum is larger than the per-coin slice', async () => {
+    const { ex, live } = setup([
+      { symbol: 'BTCUSDT', genome: G, score: 0.1 },
+      { symbol: 'XRPUSDT', genome: G, score: 0.05 },
+    ]);
+    ex.setPrice('BTCUSDT', 60000);
+    ex.setPrice('XRPUSDT', 0.6);
+    await live.start();
+    await live.tick();
+    expect(live.coins.has('BTCUSDT')).toBe(false); // $100 minimum vs $60 slice
+    expect(live.coins.has('XRPUSDT')).toBe(true);
+  });
+
+  it('flattens everything when the crash guard is active', async () => {
+    const { ex, live, state } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985);
+    await live.tick();
+    state.stressed = true;
+    await live.tick();
+    expect(ex.positions.DOGEUSDT.qty).toBe(0);
+    expect(live.coins.size).toBe(0);
+    expect(await ex.openOrders()).toHaveLength(0);
+  });
+
+  it('kill switch closes all positions and stops trading', async () => {
+    const { ex, live, logs } = setup([
+      { symbol: 'DOGEUSDT', genome: G, score: 0.1 },
+      { symbol: 'XRPUSDT', genome: G, score: 0.05 },
+    ]);
+    ex.setPrice('DOGEUSDT', 0.1);
+    ex.setPrice('XRPUSDT', 0.6);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985);
+    ex.setPrice('XRPUSDT', 0.593);
+    await live.tick();
+    await live.kill('user pressed kill');
+    expect(ex.positions.DOGEUSDT.qty).toBe(0);
+    expect(ex.positions.XRPUSDT.qty).toBe(0);
+    expect(await ex.openOrders()).toHaveLength(0);
+    expect(live.running).toBe(false);
+    await live.tick(); // no-op once killed
+    expect(await ex.openOrders()).toHaveLength(0);
+    expect(logs.some((l) => l.includes('LIVE trading stopped'))).toBe(true);
+  });
+
+  it('respects the capital cap even when the wallet holds more', async () => {
+    const { ex, live } = setup();
+    ex.wallet = 5000;
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    expect(live.budget).toBe(100);
+  });
+
+  it('trips the loss limit into the kill switch', async () => {
+    const { ex, live, advance } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.wallet -= 20; // lost 20% of the starting wallet (limit 10%)
+    advance(31_000);
+    await live.tick();
+    expect(live.killed).toBe(true);
+    expect(await ex.openOrders()).toHaveLength(0);
+  });
+});

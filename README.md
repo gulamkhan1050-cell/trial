@@ -34,6 +34,25 @@ tunes the spread per coin on the first quarter, tests on the rest, and compares 
 0.01% and your own). A quote fills only when price trades through it, and only with the chosen probability, to stand in
 for queue position.
 
+## Live trading (Binance USDⓈ-M futures)
+
+**Setup → Binance futures account** runs the grid as real orders:
+
+- Only with the ★ Live grid preset (grid strategy on the live Binance feed).
+- Trades up to *Max coins* of the coins FORGE currently rates best **and** whose Binance minimum order fits the
+  per-coin budget (`max capital × leverage ÷ max coins`); BTC's $100 minimum, for example, needs a bigger budget.
+- Every grid order is post-only (maker fee); each filled buy gets a take-profit one step up. Isolated margin per coin.
+- Safety: a capital cap regardless of wallet size, an app-side stop below each ladder plus a best-effort stop order held
+  by Binance, the crash guard, a loss limit that trips the kill switch, and a **KILL** button (cancel all orders, close
+  all positions at market) in the header and on the Grid tab.
+- API keys are stored only in the browser on that device. Create a key with **only "Enable Futures"** (never
+  withdrawals) and restrict it to your IP. Start on **Testnet** (keys from testnet.binancefuture.com) before Mainnet.
+- In the browser (`npm run dev` / `npm run preview`) requests go through the Vite proxy at `/bx/...`; the Android app
+  calls Binance directly.
+
+Code: `src/exchange/` — `binance.ts` (signed REST client), `liveGrid.ts` (order lifecycle), `liveController.ts`
+(engine ↔ live wiring), `mock.ts` (in-memory exchange used by the tests).
+
 ## Modes
 
 - **Binance live prices (default)** — real-time 1m candles from Binance's public market-data endpoints

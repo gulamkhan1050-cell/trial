@@ -6,6 +6,7 @@ import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, kellyChart, lineChart } from './charts';
 import { type MMArenaResult, runMMArena } from '../core/mmArena';
+import { type LiveController, type LiveSettings, loadLiveSettings, saveLiveSettings } from '../exchange/liveController';
 import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, gridVariants, runArena } from '../core/arena';
 
 type Tab = 'desk' | 'grid' | 'arena' | 'markets' | 'forge' | 'log' | 'setup';
@@ -67,9 +68,12 @@ export class Dashboard {
     variants: boolean;
   } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: true };
 
+  private liveSettings: LiveSettings = loadLiveSettings();
+
   constructor(
     private root: HTMLElement,
     private engine: Engine,
+    private liveCtl: LiveController | null = null,
   ) {
     this.symbol = engine.settings.symbols[0];
     try {
@@ -112,6 +116,7 @@ export class Dashboard {
     // The setup form is rendered once per visit so typing is never interrupted.
     if (this.tab === 'setup') {
       if (full) this.body.innerHTML = this.setupView();
+      this.renderLiveStatus();
       return;
     }
     // The arena form is also rendered once; only its results panel refreshes.
@@ -136,7 +141,7 @@ export class Dashboard {
     this.root.querySelector('#status')!.innerHTML = `
       <span class="pill ${e.feedStatus}">${feed}</span>
       <span class="pill">${e.barLabel().toUpperCase()} CANDLES</span>
-      <span class="pill paper">PAPER</span>
+      ${this.liveCtl?.status === 'running' ? `<span class="pill live-money">● LIVE $ · ${this.liveCtl.network === 'mainnet' ? 'REAL MONEY' : 'TESTNET'}</span><button class="kill" data-act="live-kill">■ KILL</button>` : '<span class="pill paper">PAPER</span>'}
       <span class="mono dim">${hh}:${mm}:${ss}</span>
       <button class="run ${e.running ? 'on' : ''}" data-act="toggle">${e.running ? '■ STOP' : '▶ START'}</button>
       ${e.feedStatus === 'replay' || e.feedStatus === 'connecting' ? `<span class="feed-detail mono dim">${esc(e.feedDetail)}</span>` : ''}`;
@@ -279,6 +284,7 @@ export class Dashboard {
           .join('')
       : '';
     return `
+      ${this.livePanelView()}
       <section class="kpis">
         ${kpi('Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${tot.roundTrips} round trips · all markets`)}
         ${kpi('Ladders armed', `${tot.armed}/${tot.markets}`, `${tot.holding} holding · ${e.settings.grid.leverage}× leverage`)}
@@ -320,6 +326,108 @@ export class Dashboard {
         <h3>Execution log <span class="dim">all markets</span></h3>
         ${this.logList(14)}
       </section>`;
+  }
+
+  // ------------------------------------------------------------ LIVE (real money)
+
+  private liveCardView(): string {
+    const l = this.liveSettings;
+    const opt = (v: string | number, cur: string | number, label: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
+    return `
+      <section class="card form live-card">
+        <h3>Binance futures account <span class="dim">real orders</span></h3>
+        <p class="dim small">Runs the grid as real post-only orders on Binance USDⓈ-M futures, on the best coins FORGE rates that fit your budget,
+        with isolated margin per coin. Start on <b>Testnet</b> (fake money, keys from testnet.binancefuture.com) before Mainnet.
+        Create an API key with <b>only "Enable Futures"</b> — never withdrawals — and restrict it to your IP. Keys are stored only in this browser.</p>
+        <label>Network
+          <select data-live="network">${opt('testnet', l.network, 'Testnet — fake money')}${opt('mainnet', l.network, 'Mainnet — REAL MONEY')}</select></label>
+        <label>API key
+          <input type="text" autocomplete="off" spellcheck="false" data-live="apiKey" value="${esc(l.apiKey)}"></label>
+        <label>API secret
+          <input type="password" autocomplete="off" data-live="apiSecret" value="${esc(l.apiSecret)}"></label>
+        <div class="arena-controls">
+          <label>Max capital (USDT)
+            <input type="number" min="10" step="10" data-live="maxCapital" value="${l.maxCapital}"></label>
+          <label>Leverage
+            <select data-live="leverage">${[1, 2, 3, 4, 5].map((x) => opt(x, l.leverage, `${x}×`)).join('')}</select></label>
+          <label>Max coins at once
+            <select data-live="maxCoins">${[1, 2, 3, 4, 5, 6, 8, 10].map((x) => opt(x, l.maxCoins, String(x))).join('')}</select></label>
+          <label>Loss limit (% of wallet) → kill
+            <input type="number" min="1" max="50" data-live="dailyLossLimit" value="${pctInput(l.dailyLossLimit)}"></label>
+        </div>
+        <div class="presets">
+          <button class="ghost" data-act="live-check">Check connection</button>
+          <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
+          <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
+        </div>
+        <p class="small" id="live-status"></p>
+      </section>`;
+  }
+
+  private renderLiveStatus(msg?: string) {
+    const el = this.body.querySelector<HTMLElement>('#live-status');
+    if (!el) return;
+    if (msg !== undefined) el.dataset.msg = msg;
+    const c = this.liveCtl;
+    const status = !c ? 'live trading unavailable' : c.status === 'running' ? `● running on ${c.network}` : c.status;
+    el.innerHTML = `<span class="${c?.status === 'running' ? 'up' : c?.status === 'error' ? 'down' : 'dim'}">${esc(status)}</span>${c?.message ? ` · <span class="down">${esc(c.message)}</span>` : ''}${el.dataset.msg ? ` · ${esc(el.dataset.msg)}` : ''}`;
+  }
+
+  private livePanelView(): string {
+    const lv = this.liveCtl?.live;
+    if (!lv || !this.liveCtl) return '';
+    const pnl = lv.wallet - lv.startWallet;
+    const coins = [...lv.coins.values()]
+      .map((c) => {
+        const held = c.levels.filter((l) => l.side === 'sell').length;
+        return `<span class="stage ${held ? 'hold' : 'idle'}"><b>${short(c.symbol)}</b>${held}/${c.levels.length} filled</span>`;
+      })
+      .join('');
+    return `
+      <section class="card live-card">
+        <h3>Live account · Binance ${esc(this.liveCtl.network)} <span class="dim">${esc(this.liveCtl.status)}</span></h3>
+        <div class="stats">
+          ${stat('Wallet', usd(lv.wallet))}
+          ${stat('Since start', `<span class="${cls(pnl)}">${signed(pnl)}</span>`)}
+          ${stat('Round trips', String(lv.roundTrips))}
+          ${stat('Booked (own fills)', signed(lv.realized))}
+          ${stat('Budget', `${usd(lv.budget)} × ${lv.cfg.leverage}`)}
+          ${stat('Coins', `${lv.coins.size}/${lv.cfg.maxCoins}`)}
+        </div>
+        <div class="stages">${coins || '<span class="dim small">waiting for FORGE to approve coins…</span>'}</div>
+        ${lv.lastError ? `<p class="down small">${esc(lv.lastError)}</p>` : ''}
+        <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
+      </section>`;
+  }
+
+  private async liveAction(act: string) {
+    const c = this.liveCtl;
+    if (!c) return;
+    const s = this.liveSettings;
+    try {
+      if (act === 'live-check') {
+        this.renderLiveStatus('checking…');
+        const b = await c.check(s);
+        this.renderLiveStatus(`connected to ${s.network}: wallet $${b.wallet.toFixed(2)}, available $${b.available.toFixed(2)}`);
+      } else if (act === 'live-start') {
+        if (!s.apiKey || !s.apiSecret) return this.renderLiveStatus('enter your API key and secret first');
+        if (
+          s.network === 'mainnet' &&
+          !confirm(`Start REAL-MONEY trading on Binance?\n\nUp to $${s.maxCapital} at ${s.leverage}× on up to ${s.maxCoins} coins.\nLoss limit ${Math.round(s.dailyLossLimit * 100)}% → kill switch.\n\nYou can lose this money.`)
+        )
+          return;
+        this.renderLiveStatus('starting…');
+        await c.start(s);
+        this.renderLiveStatus(c.status === 'running' ? 'placing orders — watch the Grid tab' : '');
+      } else if (act === 'live-kill') {
+        if (c.status !== 'running' && !c.live) return this.renderLiveStatus('nothing running');
+        if (!confirm('KILL: cancel every order and close every live position at market?')) return;
+        await c.kill('kill switch pressed');
+        this.renderLiveStatus('killed — all orders cancelled, positions closed. Check Binance to confirm.');
+      }
+    } catch (e) {
+      this.renderLiveStatus(`error: ${(e as Error).message}`);
+    }
   }
 
   // ------------------------------------------------------------ ARENA
@@ -690,6 +798,7 @@ export class Dashboard {
         <p class="dim small">Live fast watches 15 liquid coins on 1-minute candles with a looser gate, so setups come several times more often.
         Faster candles don't help: a 1-second move is far smaller than exchange fees, so no strategy survives FORGE there.</p>
       </section>
+${this.liveCardView()}
       <section class="card form">
         <h3>Market data</h3>
         <label>Feed
@@ -784,6 +893,8 @@ export class Dashboard {
     } else if (el.dataset.act === 'toggle') {
       if (this.engine.running) this.engine.stop();
       else void this.engine.start();
+    } else if (el.dataset.act?.startsWith('live-')) {
+      void this.liveAction(el.dataset.act);
     } else if (el.dataset.act === 'mm') {
       void this.toggleMM();
     } else if (el.dataset.act === 'arena') {
@@ -797,6 +908,18 @@ export class Dashboard {
 
   private onInput(ev: Event) {
     const el = ev.target as HTMLInputElement | HTMLSelectElement;
+    const lk = el.dataset.live as keyof LiveSettings | undefined;
+    if (lk) {
+      const l = this.liveSettings;
+      const v = el.value.trim();
+      if (lk === 'network') l.network = v as LiveSettings['network'];
+      else if (lk === 'apiKey' || lk === 'apiSecret') l[lk] = v;
+      else if (lk === 'dailyLossLimit') l.dailyLossLimit = Math.min(0.5, Math.max(0.01, Number(v) / 100));
+      else if (lk === 'maxCapital') l.maxCapital = Math.max(10, Number(v) || 100);
+      else l[lk] = Number(v);
+      saveLiveSettings(l);
+      return;
+    }
     const mk = el.dataset.mm;
     if (mk) {
       const m = this.mm;

@@ -16,7 +16,7 @@ export class MockExchange implements ExchangeClient {
   orders = new Map<number, MockOrder>();
   stops = new Map<number, { symbol: string; stopPrice: number }>();
   positions: Record<string, { qty: number; entry: number }> = {};
-  prices: Record<string, number> = {};
+  px: Record<string, number> = {};
   leverage: Record<string, number> = {};
   calls: string[] = [];
   private next = 1;
@@ -31,7 +31,7 @@ export class MockExchange implements ExchangeClient {
   }
 
   setPrice(symbol: string, price: number) {
-    this.prices[symbol] = price;
+    this.px[symbol] = price;
     for (const o of [...this.orders.values()].filter((x) => x.symbol === symbol && x.status === 'NEW').sort((a, b) => (a.side === 'BUY' ? b.price - a.price : a.price - b.price))) {
       const hit = o.side === 'BUY' ? price <= o.price : price >= o.price;
       if (!hit) continue;
@@ -76,9 +76,13 @@ export class MockExchange implements ExchangeClient {
     return Object.fromEntries(symbols.filter((s) => this.rulesMap[s]).map((s) => [s, this.rulesMap[s]]));
   }
 
+  async prices() {
+    return { ...this.px };
+  }
+
   async balance() {
     let locked = 0;
-    for (const [s, p] of Object.entries(this.positions)) locked += (Math.abs(p.qty) * (this.prices[s] ?? p.entry)) / (this.leverage[s] ?? 1);
+    for (const [s, p] of Object.entries(this.positions)) locked += (Math.abs(p.qty) * (this.px[s] ?? p.entry)) / (this.leverage[s] ?? 1);
     return { wallet: this.wallet, available: this.wallet - locked };
   }
 
@@ -92,7 +96,7 @@ export class MockExchange implements ExchangeClient {
     const r = this.rulesMap[symbol];
     if (qty * price < r.minNotional - 1e-9) throw new BinanceError(-4164, 'Order notional must be no smaller than minimum');
     const o: MockOrder = { orderId: this.next++, symbol, side, price, origQty: qty, executedQty: 0, avgPrice: 0, status: 'NEW', reduceOnly };
-    const px = this.prices[symbol];
+    const px = this.px[symbol];
     if (px !== undefined && (side === 'BUY' ? price >= px : price <= px)) o.status = 'EXPIRED'; // post-only would cross
     if (reduceOnly && o.status === 'NEW' && !this.canReduce(o)) throw new BinanceError(-2022, 'ReduceOnly Order is rejected.');
     this.orders.set(o.orderId, o);
@@ -113,7 +117,7 @@ export class MockExchange implements ExchangeClient {
     const p = this.positions[symbol];
     if (!p || p.qty === 0) return;
     this.calls.push(`CLOSE ${symbol}`);
-    this.fill(symbol, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty), this.prices[symbol], this.taker);
+    this.fill(symbol, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty), this.px[symbol], this.taker);
   }
 
   async cancel(_symbol: string, orderId: number) {
@@ -139,6 +143,6 @@ export class MockExchange implements ExchangeClient {
 
   async position(symbol: string): Promise<ExPosition> {
     const p = this.positions[symbol] ?? { qty: 0, entry: 0 };
-    return { qty: p.qty, entry: p.entry, unrealized: p.qty * ((this.prices[symbol] ?? p.entry) - p.entry) };
+    return { qty: p.qty, entry: p.entry, unrealized: p.qty * ((this.px[symbol] ?? p.entry) - p.entry) };
   }
 }

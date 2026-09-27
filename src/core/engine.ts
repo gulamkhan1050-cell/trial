@@ -346,6 +346,22 @@ export class Engine {
     return this.settings.strategy === 'grid';
   }
 
+  /** True while the crash guard's market-wide pause is running. */
+  isStressed(): boolean {
+    return this.stressWait > 0;
+  }
+
+  /** Let an outside component (the live trading controller) write to the decision log. */
+  logExternal(kind: LogEntry['kind'], text: string, pnl?: number) {
+    this.say('HAWK', kind, text, pnl);
+    this.emit();
+  }
+
+  /** Ask the UI to refresh. */
+  notify() {
+    this.emit();
+  }
+
   gridTotals() {
     let roundTrips = 0;
     let armed = 0;

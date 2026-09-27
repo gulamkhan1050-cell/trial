@@ -30,6 +30,8 @@ export interface ExPosition {
 export interface ExchangeClient {
   readonly name: string;
   rules(symbols: string[]): Promise<Record<string, SymbolRules>>;
+  /** Last traded price for every symbol on this venue. */
+  prices(): Promise<Record<string, number>>;
   /** USDT wallet balance and what's free for new orders. */
   balance(): Promise<{ wallet: number; available: number }>;
   /** Isolated margin + leverage for a symbol (idempotent). */

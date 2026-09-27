@@ -113,6 +113,11 @@ export class BinanceFutures implements ExchangeClient {
     return Object.fromEntries(symbols.filter((s) => this.rulesCache[s]).map((s) => [s, this.rulesCache[s]]));
   }
 
+  async prices(): Promise<Record<string, number>> {
+    const rows = await this.public<{ symbol: string; price: string }[]>('/fapi/v1/ticker/price');
+    return Object.fromEntries(rows.map((r) => [r.symbol, +r.price]));
+  }
+
   async balance() {
     const rows = await this.signed<{ asset: string; balance: string; availableBalance: string }[]>('GET', '/fapi/v2/balance');
     const usdt = rows.find((r) => r.asset === 'USDT');
