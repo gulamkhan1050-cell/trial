@@ -75,49 +75,86 @@ export async function loadData(
   bars: number,
   source: 'real' | 'sim',
   onProgress?: (p: ArenaProgress) => void,
-): Promise<{ data: Record<string, Candle[]>; source: 'real' | 'sim'; note: string }> {
+): Promise<{ data: Record<string, Candle[]>; source: 'real' | 'sim'; note: string; symbols: string[] }> {
   const data: Record<string, Candle[]> = {};
   if (source === 'real') {
-    try {
-      let done = 0;
-      for (const s of symbols) {
-        onProgress?.({ stage: 'download', pct: done / symbols.length, text: `downloading ${s} (${done + 1}/${symbols.length})` });
-        data[s] = await download(s, bars);
-        done++;
+    // Download coin by coin; a coin that fails (delisted, renamed, too new) is skipped, not fatal.
+    const ok: string[] = [];
+    const skipped: string[] = [];
+    let lastError = '';
+    for (const [i, s] of symbols.entries()) {
+      onProgress?.({ stage: 'download', pct: i / symbols.length, text: `downloading ${s} (${i + 1}/${symbols.length})` });
+      try {
+        const c = await download(s, bars);
+        // Too little history (listed recently) would shorten every coin's window; skip it instead.
+        if (c.length < Math.min(bars, WARMUP_BARS + 1440)) throw new Error(`only ${c.length} bars`);
+        data[s] = c;
+        ok.push(s);
+      } catch (err) {
+        lastError = (err as Error).message;
+        skipped.push(s);
+        // Nothing has worked by the third coin: Binance itself is unreachable — stop trying.
+        if (!ok.length && skipped.length >= 3) break;
       }
-      const len = Math.min(...symbols.map((s) => data[s].length));
-      for (const s of symbols) data[s] = data[s].slice(-len);
-      return { data, source: 'real', note: `real Binance 1m prices · ${fmtRange(data[symbols[0]])}` };
-    } catch (err) {
-      onProgress?.({ stage: 'download', pct: 1, text: `Binance unreachable (${(err as Error).message}) — using offline data` });
     }
+    if (ok.length >= 1) {
+      const len = Math.min(...ok.map((s) => data[s].length));
+      for (const s of ok) data[s] = data[s].slice(-len);
+      const note = `real Binance 1m prices · ${ok.length} coins · ${fmtRange(data[ok[0]])}` + (skipped.length ? ` · skipped ${skipped.map((s) => s.replace('USDT', '')).join(', ')}` : '');
+      return { data, source: 'real', note, symbols: ok };
+    }
+    onProgress?.({ stage: 'download', pct: 1, text: `Binance unreachable (${lastError}) — using offline data` });
+    for (const s of Object.keys(data)) delete data[s];
   }
   for (const [i, s] of symbols.entries()) {
     await new SimFeed(1000, 7919 * (i + 1), bars).start([s], { onHistory: (_x, c) => (data[s] = c), onCandle() {}, onStatus() {} });
   }
-  return { data, source: 'sim', note: 'offline simulated prices' };
+  return { data, source: 'sim', note: 'offline simulated prices', symbols };
 }
 
 export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
   const totalBars = WARMUP_BARS + opt.days * 1440;
-  const { data, source, note } = await loadData(opt.symbols, totalBars, opt.source, opt.onProgress);
-  const len = Math.min(...opt.symbols.map((s) => data[s].length));
+  const loaded = await loadData(opt.symbols, totalBars, opt.source, opt.onProgress);
+  const { data, source, note } = loaded;
+  const symbols = loaded.symbols;
+  const len = Math.min(...symbols.map((s) => data[s].length));
   if (len < WARMUP_BARS + 60) throw new Error('not enough history');
 
   const history: Record<string, Candle[]> = {};
-  for (const s of opt.symbols) history[s] = data[s].slice(0, WARMUP_BARS);
+  for (const s of symbols) history[s] = data[s].slice(0, WARMUP_BARS);
 
+  // Fixed seed: the same prices and settings give the same result every run.
   const engines = opt.contestants.map((c) => {
-    const e = new Engine({ ...opt.base, ...c.patch, feed: 'sim', symbols: opt.symbols });
+    const e = new Engine({ ...opt.base, ...c.patch, feed: 'sim', symbols: symbols }, 20260101);
     e.manualForge = true;
     return e;
   });
   for (const e of engines) await e.start(new HistoryFeed(history));
 
+  // Grid contestants that differ only in leverage or crash guard share one FORGE per market:
+  // they then trade identical ladders, so the comparison isolates what actually differs — and
+  // the search (most of the Arena's CPU) runs once instead of once per contestant.
+  const feeKey = (e: Engine) => `${e.settings.grid.maker}/${e.settings.grid.taker}`;
+  const leaders = new Map<string, Engine>();
+  const followerOf = new Map<Engine, Engine>();
+  for (const e of engines) {
+    if (!e.gridMode()) continue;
+    const lead = leaders.get(feeKey(e));
+    if (lead) followerOf.set(e, lead);
+    else leaders.set(feeKey(e), e);
+  }
+  const forge = () => {
+    for (const e of engines) if (!followerOf.has(e)) e.forgeOnce();
+    for (const [f, lead] of followerOf) for (const [sym, slot] of lead.grids) {
+      const mine = f.grids.get(sym);
+      if (mine) mine.forge = slot.forge;
+    }
+  };
+
   // Warm-up: a dozen FORGE generations per market before the first live bar.
-  const warmSteps = 12 * opt.symbols.length;
+  const warmSteps = 12 * symbols.length;
   for (let i = 0; i < warmSteps; i++) {
-    for (const e of engines) e.forgeOnce();
+    forge();
     if (i % 10 === 0) {
       opt.onProgress?.({ stage: 'warmup', pct: i / warmSteps, text: `FORGE warm-up ${Math.round((i / warmSteps) * 100)}%` });
       await tick();
@@ -126,23 +163,25 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   }
 
   const curves: { t: number; v: number }[][] = engines.map(() => []);
-  const forgeEvery = Math.max(1, Math.round(60 / opt.symbols.length)); // each market re-judged ~hourly
+  // Each market is re-judged about every 3 hours of replay: often enough to follow regime changes,
+  // cheap enough that 30 coins × several contestants replay a week in minutes.
+  const forgeEvery = Math.max(1, Math.round(180 / symbols.length));
   for (let i = WARMUP_BARS; i < len && !opt.signal?.cancelled; i++) {
     for (const e of engines) {
-      for (const s of opt.symbols) {
+      for (const s of symbols) {
         const k = data[s][i];
         for (let step = 1; step < 4; step++) await e.ingest(s, partial(k, step), false);
         await e.ingest(s, k, true);
       }
-      if ((i - WARMUP_BARS) % forgeEvery === 0) e.forgeOnce();
     }
+    if ((i - WARMUP_BARS) % forgeEvery === 0) forge();
     if ((i - WARMUP_BARS) % 30 === 0 || i === len - 1) {
-      const t = data[opt.symbols[0]][i].t;
+      const t = data[symbols[0]][i].t;
       engines.forEach((e, j) => curves[j].push({ t, v: e.totalEquity() }));
     }
     if (i % 20 === 0) {
       const pct = (i - WARMUP_BARS) / (len - WARMUP_BARS);
-      const day = new Date(data[opt.symbols[0]][i].t).toLocaleDateString();
+      const day = new Date(data[symbols[0]][i].t).toLocaleDateString();
       opt.onProgress?.({ stage: 'run', pct, text: `replaying ${day} · ${Math.round(pct * 100)}%` });
       await tick();
     }

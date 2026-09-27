@@ -52,6 +52,12 @@ export interface Settings {
 
 export const MAJORS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
 export const WIDE_MARKETS = [...MAJORS, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'];
+/** 30 liquid USDT pairs. Any that Binance no longer lists are skipped at download time. */
+export const MEGA_MARKETS = [
+  ...WIDE_MARKETS,
+  'UNIUSDT', 'ATOMUSDT', 'ETCUSDT', 'FILUSDT', 'APTUSDT', 'ARBUSDT', 'OPUSDT', 'INJUSDT',
+  'AAVEUSDT', 'XLMUSDT', 'HBARUSDT', 'ICPUSDT', 'PEPEUSDT', 'SHIBUSDT', 'WLDUSDT',
+];
 
 /** Bumped when defaults change for evidence-based reasons; older saved settings are migrated once. */
 const SETTINGS_VERSION = 2;
@@ -137,12 +143,14 @@ export class Engine {
   manualForge = false;
   private session = 0;
   private broker: Broker = new PaperBroker();
-  private rand = mulberry32(Date.now() % 1e9);
+  private rand: () => number;
   private forgeTimer: ReturnType<typeof setTimeout> | null = null;
   private forgeCursor = 0;
   private listeners = new Set<() => void>();
 
-  constructor(settings: Settings = loadSettings()) {
+  /** `seed` makes FORGE's random search repeatable (the Arena and tests pass one). */
+  constructor(settings: Settings = loadSettings(), seed = Date.now() % 1e9) {
+    this.rand = mulberry32(seed);
     this.settings = settings;
     const idle = (text: string): AgentStatus => ({ busy: false, text, at: 0 });
     this.agents = {

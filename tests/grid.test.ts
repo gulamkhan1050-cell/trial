@@ -105,7 +105,7 @@ describe('GRID stability on calm, BTC-like replay', () => {
       return new Response(JSON.stringify(rows.map((k) => [k.t, `${k.o}`, `${k.h}`, `${k.l}`, `${k.c}`, '0', 0, `${k.v}`])));
     });
     vi.useFakeTimers();
-    const e = new Engine({ ...DEFAULT_SETTINGS, feed: 'replay', strategy: 'grid', simBarMs: 400, symbols: ['BTCUSDT'] });
+    const e = new Engine({ ...DEFAULT_SETTINGS, feed: 'replay', strategy: 'grid', simBarMs: 400, symbols: ['BTCUSDT'], grid: { ...DEFAULT_SETTINGS.grid, leverage: 1, crashGuard: false } }, 7);
     await e.start();
     await vi.advanceTimersByTimeAsync(400 * 1700);
     e.stop();

@@ -115,8 +115,13 @@ export class ReplayFeed implements MarketFeed {
 
   async start(symbols: string[], h: FeedHandlers): Promise<void> {
     h.onStatus('connecting', 'downloading history');
-    const data = await Promise.all(symbols.map((s) => this.download(s)));
+    // One bad coin (delisted, renamed) shouldn't sink the whole replay: keep the ones that load.
+    const settled = await Promise.allSettled(symbols.map((s) => this.download(s)));
     if (this.stopped) return; // stopped while downloading
+    const okIdx = settled.map((r, i) => (r.status === 'fulfilled' && r.value.length > this.warmup + 50 ? i : -1)).filter((i) => i >= 0);
+    if (!okIdx.length) throw new Error((settled.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined)?.reason?.message ?? 'no history');
+    symbols = okIdx.map((i) => symbols[i]);
+    const data = okIdx.map((i) => (settled[i] as PromiseFulfilledResult<Candle[]>).value);
     const len = Math.min(...data.map((d) => d.length));
     if (len < this.warmup + 50) throw new Error('not enough history for replay');
     // Align every symbol on the same most-recent `len` bars.

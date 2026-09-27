@@ -90,3 +90,29 @@ describe('crash guard', () => {
     expect(guard.maxDrawdown).toBeLessThan(noGuard.maxDrawdown);
   }, 180_000);
 });
+
+describe('Arena robustness', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('skips a coin Binance no longer lists instead of abandoning real data', async () => {
+    const { SimFeed } = await import('../src/core/market');
+    let c: import('../src/core/types').Candle[] = [];
+    await new SimFeed(1000, 5, 2700, 0.3).start(['BTCUSDT'], { onHistory: (_x, h) => (c = h), onCandle() {}, onStatus() {} });
+    vi.stubGlobal('fetch', async (url: string) => {
+      const u = new URL(url);
+      if (u.searchParams.get('symbol') === 'GONEUSDT') return new Response('{"code":-1121,"msg":"Invalid symbol."}', { status: 400 });
+      const end = Number(u.searchParams.get('endTime') ?? Infinity);
+      return new Response(JSON.stringify(c.filter((k) => k.t <= end).slice(-1000).map((k) => [k.t, `${k.o}`, `${k.h}`, `${k.l}`, `${k.c}`, '0', 0, `${k.v}`])));
+    });
+    const out = await runArena({ symbols: ['BTCUSDT', 'GONEUSDT', 'ETHUSDT'], days: 1, source: 'real', base: DEFAULT_SETTINGS, contestants: ARENA_CONTESTANTS });
+    expect(out.source).toBe('real');
+    expect(out.note).toMatch(/2 coins/);
+    expect(out.note).toMatch(/skipped GONE/);
+  }, 120_000);
+
+  it('gives the same result for the same data', async () => {
+    const run = () => runArena({ symbols: ['BTCUSDT', 'ETHUSDT'], days: 1, source: 'sim', base: DEFAULT_SETTINGS, contestants: ARENA_CONTESTANTS });
+    const [a, b] = [await run(), await run()];
+    expect(a.results.map((r) => r.final)).toEqual(b.results.map((r) => r.final));
+  }, 120_000);
+});

@@ -1,6 +1,6 @@
 import { unrealized } from '../agents/hawk';
 import { DEFAULT_SENTRY } from '../agents/sentry';
-import { DEFAULT_SETTINGS, MAJORS, WIDE_MARKETS, type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
+import { DEFAULT_SETTINGS, MAJORS, MEGA_MARKETS, WIDE_MARKETS, type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
 import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
@@ -61,10 +61,10 @@ export class Dashboard {
     signal: { cancelled: boolean };
     source: 'real' | 'sim';
     days: number;
-    wide: boolean;
+    markets: number;
     leverage: number;
     variants: boolean;
-  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, wide: true, leverage: 3 };
+  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3 };
 
   constructor(
     private root: HTMLElement,
@@ -337,7 +337,7 @@ export class Dashboard {
           <label>Period
             <select data-arena="days">${opt(1, a.days, 'Last 1 day')}${opt(3, a.days, 'Last 3 days')}${opt(7, a.days, 'Last 7 days')}</select></label>
           <label>Markets
-            <select data-arena="wide">${opt('0', a.wide ? '1' : '0', '6 majors')}${opt('1', a.wide ? '1' : '0', '15 coins')}</select></label>
+            <select data-arena="markets">${opt(6, a.markets, '6 majors')}${opt(15, a.markets, '15 coins')}${opt(30, a.markets, '30 coins (slower)')}</select></label>
           <label>Contestants
             <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 4 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
           <label>Grid leverage (Normal vs Micro)
@@ -517,7 +517,7 @@ export class Dashboard {
     const base = this.engine.settings;
     try {
       const out = await runArena({
-        symbols: a.wide ? WIDE_MARKETS : MAJORS,
+        symbols: a.markets >= 30 ? MEGA_MARKETS : a.markets >= 15 ? WIDE_MARKETS : MAJORS,
         days: a.days,
         source: a.source,
         base: { ...base, grid: { ...base.grid, leverage: a.leverage } },
@@ -806,7 +806,7 @@ export class Dashboard {
       const a = this.arena;
       if (ak === 'source') a.source = el.value as 'real' | 'sim';
       if (ak === 'days') a.days = Number(el.value);
-      if (ak === 'wide') a.wide = el.value === '1';
+      if (ak === 'markets') a.markets = Number(el.value);
       if (ak === 'leverage') a.leverage = Number(el.value);
       if (ak === 'variants') a.variants = el.value === '1';
       return;

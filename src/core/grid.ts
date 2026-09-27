@@ -110,8 +110,21 @@ export class GridBot {
   /** Market moved from `a` to `b` (one straight segment). Returns fills in the order they happen. */
   move(a: number, b: number): GridFill[] {
     if (!this.armed || a === b) return [];
-    const fills: GridFill[] = [];
     const g = this.genome;
+    // Fast path: most price moves cross no resting order, trigger no stop and no trail.
+    let hit = false;
+    for (const o of this.orders) {
+      if (b < a ? o.side === 'buy' && o.price < a && o.price >= b : o.side === 'sell' && o.price > a && o.price <= b) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) {
+      if (b < a && b <= this.stopPrice()) return [this.liquidate(b)];
+      if (b > a && b > this.center * (1 + g.spacing) && this.inventory().qty === 0) this.arm(b, this.capital);
+      return [];
+    }
+    const fills: GridFill[] = [];
     if (b < a) {
       for (const o of this.orders.filter((o) => o.side === 'buy' && o.price < a && o.price >= b).sort((x, y) => y.price - x.price)) {
         const fee = o.price * o.qty * this.fees.maker;
