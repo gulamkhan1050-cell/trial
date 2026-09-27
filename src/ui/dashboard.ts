@@ -98,6 +98,7 @@ export class Dashboard {
     const feed = e.feedStatus === 'live' ? 'LIVE DATA' : e.feedStatus === 'sim' ? 'SIMULATOR' : e.feedStatus.toUpperCase();
     this.root.querySelector('#status')!.innerHTML = `
       <span class="pill ${e.feedStatus}">${feed}</span>
+      <span class="pill">${e.barLabel().toUpperCase()} CANDLES</span>
       <span class="pill paper">PAPER</span>
       <span class="mono dim">${hh}:${mm}:${ss}</span>
       <button class="run ${e.running ? 'on' : ''}" data-act="toggle">${e.running ? '■ STOP' : '▶ START'}</button>`;
