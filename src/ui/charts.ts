@@ -108,15 +108,16 @@ export function candleChart(
   position: Position | undefined,
   trades: Trade[],
   fmt: (v: number) => string,
+  levels: { price: number; color: string }[] = [],
 ) {
   const { ctx, w, h } = setup(canvas);
   if (candles.length < 2) return;
   const volH = 34;
   const top = 16;
   const bottom = h - volH - 6;
-  const levels = position ? [position.stop, position.take, position.entry] : [];
-  let min = Math.min(...candles.map((c) => c.l), ...levels);
-  let max = Math.max(...candles.map((c) => c.h), ...levels);
+  const marks = [...(position ? [position.stop, position.take, position.entry] : []), ...levels.map((l) => l.price)];
+  let min = Math.min(...candles.map((c) => c.l), ...marks);
+  let max = Math.max(...candles.map((c) => c.h), ...marks);
   const pad = (max - min) * 0.06 || 1;
   min -= pad;
   max += pad;
@@ -155,6 +156,18 @@ export function candleChart(
     const col = t.pnl >= 0 ? up : dn;
     marker(ctx, xAt(Math.max(t.openedAt, t0)), y(t.entry), t.dir === 1 ? '▲' : '▼', css('--accent'));
     marker(ctx, xAt(t.closedAt), y(t.exit), '●', col);
+  }
+
+  for (const l of levels) {
+    ctx.strokeStyle = css(l.color);
+    ctx.globalAlpha = 0.7;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.moveTo(0, y(l.price));
+    ctx.lineTo(w - 50, y(l.price));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
   }
 
   const last = candles[candles.length - 1];

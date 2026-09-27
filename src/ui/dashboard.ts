@@ -6,10 +6,11 @@ import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, kellyChart, lineChart } from './charts';
 
-type Tab = 'desk' | 'markets' | 'forge' | 'log' | 'setup';
+type Tab = 'desk' | 'grid' | 'markets' | 'forge' | 'log' | 'setup';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'desk', label: 'Desk' },
+  { id: 'grid', label: 'Grid' },
   { id: 'markets', label: 'Markets' },
   { id: 'forge', label: 'Forge' },
   { id: 'log', label: 'Log' },
@@ -84,7 +85,7 @@ export class Dashboard {
       if (full) this.body.innerHTML = this.setupView();
       return;
     }
-    const html = this.tab === 'desk' ? this.deskView() : this.tab === 'markets' ? this.marketsView() : this.tab === 'forge' ? this.forgeView() : this.logView();
+    const html = this.tab === 'desk' ? this.deskView() : this.tab === 'grid' ? this.gridView() : this.tab === 'markets' ? this.marketsView() : this.tab === 'forge' ? this.forgeView() : this.logView();
     this.body.innerHTML = html;
     this.drawCharts();
   }
@@ -197,6 +198,78 @@ export class Dashboard {
           <span>${esc(l.text)}</span>${l.pnl !== undefined ? `<span class="mono ${cls(l.pnl)}">${signed(l.pnl)}</span>` : ''}</li>`,
       )
       .join('')}</ul>`;
+  }
+
+  // ------------------------------------------------------------ GRID
+
+  private gridView(): string {
+    const e = this.engine;
+    const sym = e.settings.grid.symbol;
+    const bot = e.gridBot;
+    const f = e.gridForge;
+    const c = f.champion;
+    const px = e.price(sym);
+    const gridTrades = e.trades.filter((t) => t.symbol === sym && t.reason.startsWith('grid'));
+    const gridPnl = gridTrades.reduce((s, t) => s + t.pnl, 0);
+    const inv = bot?.inventory() ?? { qty: 0, cost: 0 };
+    const status = !e.gridMode() ? 'OFF' : bot?.armed ? 'ARMED' : 'WAITING';
+
+    if (!e.gridMode())
+      return `<section class="card"><h3>Grid engine <span class="dim">off</span></h3>
+        <p class="empty">The GRID micro-trader is off. Go to Setup and tap <b>▦ Grid micro-trading</b> to run it.</p></section>`;
+
+    const rows = bot?.armed
+      ? [...bot.orders]
+          .sort((a, b) => b.price - a.price)
+          .map((o) => {
+            const dist = px ? ((o.price - px) / px) * 100 : 0;
+            return `<tr class="${o.side}"><td>${o.side === 'sell' ? 'TP' : 'L' + o.lvl}</td><td class="mono">${fmtPrice(o.price)}</td>
+              <td class="mono">${usd(o.price * o.qty)}</td><td class="mono dim">${dist >= 0 ? '+' : ''}${dist.toFixed(2)}%</td>
+              <td>${o.side === 'sell' ? '<span class="up">FILLED → selling</span>' : '<span class="dim">ARMED</span>'}</td></tr>`;
+          })
+          .join('')
+      : '';
+    return `
+      <section class="kpis">
+        ${kpi('Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${gridTrades.length} round trips`)}
+        ${kpi('Status', status, bot?.armed ? `${short(sym)} · ${bot.genome.levels} levels` : esc(e.agents.SENTRY.text))}
+        ${kpi('Inventory', usd(inv.cost), `open ${signed(bot ? bot.unrealized(px || bot.center) : 0)}`)}
+        ${kpi('Step', c ? `${(c.genome.spacing * 100).toFixed(2)}%` : '—', `fees ${(e.settings.grid.maker * 200).toFixed(2)}% per round trip`)}
+      </section>
+      <section class="card">
+        <h3>Grid engine · ${short(sym)} <span class="dim">buys ▬ green · take-profits ▬ red</span></h3>
+        <canvas id="c-grid" class="chart tall"></canvas>
+      </section>
+      <div class="split">
+        <section class="card">
+          <h3>Order grid <span class="dim">${bot?.armed ? `stop ${fmtPrice(bot.stopPrice())}` : 'not armed'}</span></h3>
+          ${
+            rows
+              ? `<table class="grid"><thead><tr><th>LVL</th><th>PRICE</th><th>SIZE</th><th>DIST</th><th>STATUS</th></tr></thead><tbody>${rows}</tbody></table>`
+              : `<p class="empty">${esc(e.agents.SENTRY.text || 'Waiting for FORGE to find a grid that beats fees.')}</p>`
+          }
+        </section>
+        <section class="card">
+          <h3>Grid genome <span class="dim">FORGE gen ${f.generation} · kill ${f.tested ? pct(f.killed / f.tested) : '0%'}</span></h3>
+          ${
+            c
+              ? `<div class="stats">
+                  ${stat('Step', `${(c.genome.spacing * 100).toFixed(2)}%`)}
+                  ${stat('Levels', String(c.genome.levels))}
+                  ${stat('Stop', `${(c.genome.stop * 100).toFixed(1)}%`)}
+                  ${stat('OOS profit', pct(c.test.profit, 2))}
+                  ${stat('OOS trips', String(c.test.roundTrips))}
+                  ${stat('Max DD', pct(c.test.maxDrawdown, 2))}
+                </div>`
+              : `<p class="empty">No grid has beaten fees on unseen data yet.</p>`
+          }
+          <canvas id="c-gridfit" class="chart short"></canvas>
+        </section>
+      </div>
+      <section class="card">
+        <h3>Execution log</h3>
+        ${this.logList(12)}
+      </section>`;
   }
 
   // ------------------------------------------------------------ MARKETS
@@ -333,10 +406,13 @@ export class Dashboard {
       <section class="card">
         <h3>Presets <span class="dim">paper only</span></h3>
         <div class="presets">
+          <button class="ghost" data-preset="grid">▦ Grid micro-trading — replay</button>
           <button class="ghost" data-preset="replay">⏩ Replay real market — fast</button>
           <button class="ghost" data-preset="fast">⚡ Live — 15 markets, looser gate</button>
           <button class="ghost" data-preset="standard">Live standard — 6 markets, default gate</button>
         </div>
+        <p class="dim small">Grid micro-trading lays a ladder of limit buys under BTC; each fill gets a take-profit one step higher,
+        so every small bounce books a small profit at maker fees. It earns in ranges and is stopped out in hard sell-offs.</p>
         <p class="dim small">Replay fast-forwards the last ~2 days of real 1m prices (1 bar every 1.5s) — the same thing the "session replay" dashboards show.
         It is real price history, so results mean more than the simulator, but it is still a backtest: live trading can't run faster than the market.</p>
         <p class="dim small">Live fast watches 15 liquid coins on 1-minute candles with a looser gate, so setups come several times more often.
@@ -360,6 +436,20 @@ export class Dashboard {
           <input type="number" step="0.5" min="0.5" max="60" data-set="simBarMs" value="${s.simBarMs / 1000}"></label>
         <label>Markets (comma separated)
           <input type="text" data-set="symbols" value="${s.symbols.join(',')}"></label>
+      </section>
+      <section class="card form">
+        <h3>Strategy</h3>
+        <label>Engine
+          <select data-set="strategy">
+            <option value="agents" ${s.strategy === 'agents' ? 'selected' : ''}>Directional agents (SCOUT → SENTRY → HAWK)</option>
+            <option value="grid" ${s.strategy === 'grid' ? 'selected' : ''}>Grid micro-trading (GRID on one market)</option>
+          </select></label>
+        <label>Grid market
+          <input type="text" data-set="grid.symbol" value="${s.grid.symbol}"></label>
+        <label>Maker fee % (grid fills)
+          <input type="number" step="0.01" min="0" max="1" data-set="grid.maker" value="${pctInput(s.grid.maker)}"></label>
+        <label>Taker fee % (stop-outs)
+          <input type="number" step="0.01" min="0" max="1" data-set="grid.taker" value="${pctInput(s.grid.taker)}"></label>
       </section>
       <section class="card form">
         <h3>HAWK · sizing</h3>
@@ -429,6 +519,18 @@ export class Dashboard {
       case 'feed':
         this.engine.updateSettings({ feed: el.value as Settings['feed'] });
         break;
+      case 'strategy':
+        this.engine.updateSettings({ strategy: el.value as Settings['strategy'] });
+        break;
+      case 'grid.symbol': {
+        const v = el.value.trim().toUpperCase();
+        if (/^[A-Z0-9]{2,20}$/.test(v)) this.engine.updateSettings({ grid: { ...s.grid, symbol: v } });
+        break;
+      }
+      case 'grid.maker':
+      case 'grid.taker':
+        if (num >= 0) this.engine.updateSettings({ grid: { ...s.grid, [key.split('.')[1]]: num / 100 } });
+        break;
       case 'interval':
         this.engine.updateSettings({ interval: el.value as Settings['interval'] });
         break;
@@ -471,6 +573,20 @@ export class Dashboard {
       candleChart(cC, candles, e.positions.find((p) => p.symbol === this.symbol), e.trades.filter((t) => t.symbol === this.symbol), fmtPrice);
     }
 
+    const gC = q('c-grid');
+    const gs = e.symbols.get(e.settings.grid.symbol);
+    if (gC && gs) {
+      const candles = [...gs.candles.slice(-119), ...(gs.forming ? [gs.forming] : [])];
+      const levels = (e.gridBot?.armed ? e.gridBot.orders : []).map((o) => ({ price: o.price, color: o.side === 'buy' ? '--up' : '--down' }));
+      if (e.gridBot?.armed) levels.push({ price: e.gridBot.stopPrice(), color: '--warn' });
+      candleChart(gC, candles, undefined, e.trades.filter((t) => t.symbol === gs.symbol), fmtPrice, levels);
+    }
+    const gfC = q('c-gridfit');
+    if (gfC) {
+      const h = e.gridForge.history.slice(-80);
+      lineChart(gfC, [{ values: h.map((x) => Math.max(-0.05, x.best)), color: '--up', fill: true }], (v) => `${(v * 100).toFixed(2)}%`, 0);
+    }
+
     const fC = q('c-fitness');
     if (fC && s) {
       const h = s.evolver.history.slice(-80);
@@ -499,14 +615,16 @@ export class Dashboard {
 const DEFAULT_POP = 40;
 
 const PRESETS: Record<string, Partial<Settings>> = {
-  replay: { feed: 'replay', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
+  grid: { feed: 'replay', strategy: 'grid', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
+  replay: { feed: 'replay', strategy: 'agents', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
   fast: {
     feed: 'binance',
+    strategy: 'agents',
     interval: '1m',
     symbols: [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'],
     sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 5, maxOpen: 5 },
   },
-  standard: { feed: 'binance', interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
+  standard: { feed: 'binance', strategy: 'agents', interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
 };
 
 /** Fraction → percent for a form field, without float noise like 55.00000000000001. */

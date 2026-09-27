@@ -10,6 +10,12 @@ modelled on the "agent trading floor" dashboards (JEV Desk, FOMO × Grok, Sets M
 | **HAWK** | The only agent that trades. Sizes each trade with half-Kelly from out-of-sample stats (capped by *max risk per trade* and *max leverage*), enters, trails the stop and exits on stop/target. |
 | **FORGE** | Self-evolving strategy search (genetic algorithm): a population of 40 strategy configs per market (trend / mean-revert / breakout families) is backtested every generation; only configs that are profitable on data they were **not** trained on survive. The champion is re-tested each generation and retired if it stops passing. |
 
+**GRID micro-trading** (Setup → *▦ Grid micro-trading*) swaps the directional agents for a ladder of resting limit
+buys under one market; every filled buy gets a take-profit one step higher, so each small bounce books a small profit at
+maker fees. FORGE evolves the step, number of levels and stop, and only grids profitable on unseen data are traded;
+SENTRY won't lay a ladder into a sell-off and liquidates below the stop. It earns in ranges and loses in hard sell-offs.
+Grid profit only exists if the step clears round-trip fees — set your exchange's maker/taker fees in Setup.
+
 Screens: **Desk** (balance, PnL, pipeline, SENTRY checks, positions, log) · **Markets** (live candles with entry/stop/target) ·
 **Forge** (generation, kill rate, fitness curve, selection funnel, Kelly curve, genome) · **Log** · **Setup**.
 
