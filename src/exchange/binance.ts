@@ -9,13 +9,15 @@ import { roundTo } from './types';
  * in the Android app, CapacitorHttp performs them natively against the real host.
  */
 
-export type Network = 'testnet' | 'mainnet';
+/** mainnet = real money; demo = Binance Demo Trading (binance.com demo mode); testnet = the older futures testnet. */
+export type Network = 'testnet' | 'demo' | 'mainnet';
 
 export const FUTURES_HOSTS: Record<Network, string> = {
   mainnet: 'https://fapi.binance.com',
   testnet: 'https://testnet.binancefuture.com',
+  demo: 'https://demo-fapi.binance.com',
 };
-const PROXY: Record<Network, string> = { mainnet: '/bx/fapi', testnet: '/bx/ftest' };
+const PROXY: Record<Network, string> = { mainnet: '/bx/fapi', testnet: '/bx/ftest', demo: '/bx/fdemo' };
 
 export function futuresBase(network: Network): string {
   const w = typeof window !== 'undefined' ? (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }) : null;

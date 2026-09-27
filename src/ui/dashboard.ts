@@ -141,7 +141,7 @@ export class Dashboard {
     this.root.querySelector('#status')!.innerHTML = `
       <span class="pill ${e.feedStatus}">${feed}</span>
       <span class="pill">${e.barLabel().toUpperCase()} CANDLES</span>
-      ${this.liveCtl?.status === 'running' ? `<span class="pill live-money">● LIVE $ · ${this.liveCtl.network === 'mainnet' ? 'REAL MONEY' : 'TESTNET'}</span><button class="kill" data-act="live-kill">■ KILL</button>` : '<span class="pill paper">PAPER</span>'}
+      ${this.liveCtl?.status === 'running' ? `<span class="pill live-money">● LIVE $ · ${this.liveCtl.network === 'mainnet' ? 'REAL MONEY' : this.liveCtl.network === 'demo' ? 'DEMO' : 'TESTNET'}</span><button class="kill" data-act="live-kill">■ KILL</button>` : '<span class="pill paper">PAPER</span>'}
       <span class="mono dim">${hh}:${mm}:${ss}</span>
       <button class="run ${e.running ? 'on' : ''}" data-act="toggle">${e.running ? '■ STOP' : '▶ START'}</button>
       ${e.feedStatus === 'replay' || e.feedStatus === 'connecting' ? `<span class="feed-detail mono dim">${esc(e.feedDetail)}</span>` : ''}`;
@@ -337,10 +337,10 @@ export class Dashboard {
       <section class="card form live-card">
         <h3>Binance futures account <span class="dim">real orders</span></h3>
         <p class="dim small">Runs the grid as real post-only orders on Binance USDⓈ-M futures, on the best coins FORGE rates that fit your budget,
-        with isolated margin per coin. Start on <b>Testnet</b> (fake money, keys from testnet.binancefuture.com) before Mainnet.
+        with isolated margin per coin. Start with <b>Demo trading</b> (fake money: keys made in binance.com demo mode) before Mainnet.
         Create an API key with <b>only "Enable Futures"</b> — never withdrawals — and restrict it to your IP. Keys are stored only in this browser.</p>
         <label>Network
-          <select data-live="network">${opt('testnet', l.network, 'Testnet — fake money')}${opt('mainnet', l.network, 'Mainnet — REAL MONEY')}</select></label>
+          <select data-live="network">${opt('demo', l.network, 'Demo trading (binance.com demo mode) — fake money')}${opt('testnet', l.network, 'Old futures testnet — fake money')}${opt('mainnet', l.network, 'Mainnet — REAL MONEY')}</select></label>
         <label>API key
           <input type="text" autocomplete="off" spellcheck="false" data-live="apiKey" value="${esc(l.apiKey)}"></label>
         <label>API secret

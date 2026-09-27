@@ -5,6 +5,7 @@ import { defineConfig } from 'vite';
 const binanceProxy = {
   '/bx/fapi': { target: 'https://fapi.binance.com', changeOrigin: true, rewrite: (p: string) => p.replace(/^\/bx\/fapi/, '') },
   '/bx/ftest': { target: 'https://testnet.binancefuture.com', changeOrigin: true, rewrite: (p: string) => p.replace(/^\/bx\/ftest/, '') },
+  '/bx/fdemo': { target: 'https://demo-fapi.binance.com', changeOrigin: true, rewrite: (p: string) => p.replace(/^\/bx\/fdemo/, '') },
 };
 
 export default defineConfig({

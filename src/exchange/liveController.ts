@@ -19,7 +19,7 @@ export interface LiveSettings {
 }
 
 export const DEFAULT_LIVE_SETTINGS: LiveSettings = {
-  network: 'testnet',
+  network: 'demo',
   apiKey: '',
   apiSecret: '',
   maxCapital: 100,
