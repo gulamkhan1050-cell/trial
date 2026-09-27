@@ -1,5 +1,6 @@
 import { unrealized } from '../agents/hawk';
-import { type Engine, fmtPrice, type SymbolState } from '../core/engine';
+import { DEFAULT_SENTRY } from '../agents/sentry';
+import { type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
 import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
@@ -210,7 +211,7 @@ export class Dashboard {
         const ref = c[Math.max(0, c.length - 60)]?.c ?? px;
         const ch = ref ? (px - ref) / ref : 0;
         return `<button class="sym ${sym === this.symbol ? 'on' : ''}" data-sym="${sym}"><b>${short(sym)}</b>
-          <span class="mono">${px ? fmtPrice(px) : '—'}</span><small class="${cls(ch)}">${pct(ch, 2)} 1h</small></button>`;
+          <span class="mono">${px ? fmtPrice(px) : '—'}</span><small class="${cls(ch)}">${pct(ch, 2)} 60 bars</small></button>`;
       })
       .join('');
     const champ = s?.evolver.champion;
@@ -218,7 +219,7 @@ export class Dashboard {
     return `
       <div class="syms">${chips}</div>
       <section class="card">
-        <h3>${short(this.symbol)} / USDT <span class="dim">1m · last 120 bars</span></h3>
+        <h3>${short(this.symbol)} / USDT <span class="dim">${e.barLabel()} · last 120 bars</span></h3>
         <canvas id="c-candles" class="chart tall"></canvas>
       </section>
       <section class="card">
@@ -328,12 +329,27 @@ export class Dashboard {
   private setupView(): string {
     const s = this.engine.settings;
     return `
+      <section class="card">
+        <h3>Presets <span class="dim">paper only</span></h3>
+        <div class="presets">
+          <button class="ghost" data-preset="fast">⚡ Fast — 1s candles, looser gate</button>
+          <button class="ghost" data-preset="standard">Standard — 1m candles, default gate</button>
+        </div>
+        <p class="dim small">Fast trades within minutes on live prices, like the simulator. Expect many small trades and a big share lost to fees —
+        a good way to watch the agents, a bad way to judge a strategy.</p>
+      </section>
       <section class="card form">
         <h3>Market data</h3>
         <label>Feed
           <select data-set="feed">
             <option value="binance" ${s.feed === 'binance' ? 'selected' : ''}>Binance live prices (paper fills)</option>
             <option value="sim" ${s.feed === 'sim' ? 'selected' : ''}>Simulator (turbo, offline)</option>
+          </select></label>
+        <label>Live candle timeframe
+          <select data-set="interval">
+            <option value="1s" ${s.interval === '1s' ? 'selected' : ''}>1 second (fast — many trades)</option>
+            <option value="1m" ${s.interval === '1m' ? 'selected' : ''}>1 minute (standard)</option>
+            <option value="5m" ${s.interval === '5m' ? 'selected' : ''}>5 minutes (slow — fewer, larger moves)</option>
           </select></label>
         <label>Simulator speed — seconds per 1m bar
           <input type="number" step="0.5" min="0.5" max="60" data-set="simBarMs" value="${s.simBarMs / 1000}"></label>
@@ -371,7 +387,7 @@ export class Dashboard {
   // ------------------------------------------------------------ events
 
   private onClick(ev: Event) {
-    const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-tab],[data-act],[data-sym]');
+    const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-tab],[data-act],[data-sym],[data-preset]');
     if (!el) return;
     if (el.dataset.tab) {
       this.tab = el.dataset.tab as Tab;
@@ -384,6 +400,9 @@ export class Dashboard {
       this.body.scrollTop = 0;
     } else if (el.dataset.sym) {
       this.symbol = el.dataset.sym;
+      this.renderTab(true);
+    } else if (el.dataset.preset) {
+      this.engine.updateSettings(PRESETS[el.dataset.preset]);
       this.renderTab(true);
     } else if (el.dataset.act === 'toggle') {
       if (this.engine.running) this.engine.stop();
@@ -404,6 +423,9 @@ export class Dashboard {
     switch (key) {
       case 'feed':
         this.engine.updateSettings({ feed: el.value as 'binance' | 'sim' });
+        break;
+      case 'interval':
+        this.engine.updateSettings({ interval: el.value as Settings['interval'] });
         break;
       case 'simBarMs':
         if (num > 0) this.engine.updateSettings({ simBarMs: num * 1000 });
@@ -470,6 +492,14 @@ export class Dashboard {
 }
 
 const DEFAULT_POP = 40;
+
+const PRESETS: Record<string, Partial<Settings>> = {
+  fast: {
+    interval: '1s',
+    sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 30, maxOpen: 5 },
+  },
+  standard: { interval: '1m', sentry: { ...DEFAULT_SENTRY } },
+};
 
 /** Fraction → percent for a form field, without float noise like 55.00000000000001. */
 const pctInput = (x: number) => String(Math.round(x * 10000) / 100);

@@ -31,8 +31,12 @@ export const BINANCE_PUBLIC: BinanceFeedOptions = {
   rest: 'https://data-api.binance.vision',
   ws: 'wss://data-stream.binance.vision',
   interval: '1m',
-  history: 600,
+  history: 1000, // Binance max per request
 };
+
+/** Candle lengths Binance serves that are useful here. 1s makes live paper trading as fast as the simulator. */
+export const INTERVALS = { '1s': 1_000, '1m': 60_000, '5m': 300_000 } as const;
+export type Interval = keyof typeof INTERVALS;
 
 type RawKline = [number, string, string, string, string, string, number, string];
 

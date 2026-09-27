@@ -3,7 +3,7 @@ import { DEFAULT_SENTRY, type SentryConfig, sentry, type Verdict } from '../agen
 import { DEFAULT_HAWK, type HawkConfig, manage, plan, unrealized } from '../agents/hawk';
 import { PaperBroker } from './broker';
 import { DEFAULT_EVOLVER, type EvolverState, newEvolver, type Scored, step } from './evolver';
-import { BinanceFeed, type FeedStatus, type MarketFeed, SimFeed } from './market';
+import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, SimFeed } from './market';
 import { mulberry32, uid } from './rng';
 import type { AgentId, Broker, Candle, LogEntry, Position, Signal, Trade } from './types';
 
@@ -12,6 +12,7 @@ export type Stage = 'idle' | 'read' | 'gate' | 'veto' | 'execute' | 'hold';
 
 export interface Settings {
   feed: FeedMode;
+  interval: Interval; // live candle length
   simBarMs: number;
   startBalance: number;
   symbols: string[];
@@ -21,6 +22,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   feed: 'binance',
+  interval: '1m',
   simBarMs: 1500,
   startBalance: 1000,
   symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'],
@@ -133,7 +135,9 @@ export class Engine {
       },
     };
 
-    this.feed = this.settings.feed === 'sim' ? new SimFeed(this.settings.simBarMs) : new BinanceFeed();
+    this.feed = this.settings.feed === 'sim'
+        ? new SimFeed(this.settings.simBarMs)
+        : new BinanceFeed({ ...BINANCE_PUBLIC, interval: this.settings.interval });
     this.feedName = this.feed.name;
     try {
       await this.feed.start(this.settings.symbols, handlers);
@@ -170,9 +174,10 @@ export class Engine {
 
   updateSettings(patch: Partial<Settings>) {
     const feedChanged = patch.feed !== undefined && patch.feed !== this.settings.feed;
+    const intervalChanged = patch.interval !== undefined && patch.interval !== this.settings.interval;
     this.settings = { ...this.settings, ...patch };
     saveSettings(this.settings);
-    if (feedChanged || patch.simBarMs !== undefined || patch.symbols !== undefined) {
+    if (feedChanged || intervalChanged || patch.simBarMs !== undefined || patch.symbols !== undefined) {
       const wasRunning = this.running;
       this.stop();
       if (feedChanged) {
@@ -198,6 +203,16 @@ export class Engine {
   }
 
   // ------------------------------------------------------------ derived numbers
+
+  /** Wall-clock length of one bar on the running feed. */
+  barMs(): number {
+    return this.feedName === 'Simulator' ? this.settings.simBarMs : INTERVALS[this.settings.interval];
+  }
+
+  /** Label for the candle length the agents are reading. */
+  barLabel(): string {
+    return this.feedName === 'Simulator' ? '1m (sim)' : this.settings.interval;
+  }
 
   price(symbol: string): number {
     const s = this.symbols.get(symbol);
@@ -260,7 +275,7 @@ export class Engine {
       else s.candles.push(candle);
       if (s.candles.length > HISTORY_KEEP) s.candles.splice(0, s.candles.length - HISTORY_KEEP);
       await this.onBarClose(s);
-      if (symbol === this.settings.symbols[0]) this.markEquity();
+      if (symbol === this.settings.symbols[0]) this.markEquity(2000);
     }
     this.emit();
   }
@@ -286,7 +301,8 @@ export class Engine {
       dayStartEquity: this.dayStartEquity,
       dayPnl: this.dayPnl,
       now: Date.now(),
-      barMs: this.feedName === 'Simulator' ? this.settings.simBarMs : 60_000,
+      barMs: this.barMs(),
+      barMinutes: this.feedName === 'Simulator' ? 1 : INTERVALS[this.settings.interval] / 60_000,
     }, this.settings.sentry);
     this.lastGate = { symbol: s.symbol, signal: cand.signal, verdict, at: Date.now() };
     const passed = verdict.checks.filter((c) => c.pass).length;
@@ -418,7 +434,10 @@ export class Engine {
     this.log.length = Math.min(this.log.length, 250);
   }
 
-  private markEquity() {
+  /** Record an equity point; `minGapMs` thins out points on very fast (1s) bars so the chart keeps some history. */
+  private markEquity(minGapMs = 0) {
+    const last = this.equity[this.equity.length - 1];
+    if (last && Date.now() - last.t < minGapMs) return;
     this.equity.push({ t: Date.now(), v: this.totalEquity() });
     if (this.equity.length > 600) this.equity.splice(0, this.equity.length - 600);
   }

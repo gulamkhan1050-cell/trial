@@ -148,7 +148,7 @@ describe('SENTRY', () => {
       candles,
     };
   };
-  const book = { positions: [], recentTrades: [], dayStartEquity: 1000, dayPnl: 0, now: Date.now(), barMs: 60_000 };
+  const book = { positions: [], recentTrades: [], dayStartEquity: 1000, dayPnl: 0, now: Date.now(), barMs: 60_000, barMinutes: 1 };
 
   it('passes a strong, liquid, aligned setup', () => {
     expect(sentry(cand(0.9), book).pass).toBe(true);
@@ -157,6 +157,12 @@ describe('SENTRY', () => {
     const v = sentry(cand(0.2), book);
     expect(v.pass).toBe(false);
     expect(v.checks.find((c) => c.name === 'Confidence')?.pass).toBe(false);
+  });
+  it('scales the liquidity floor to the candle length', () => {
+    // 1e6 per bar passes on 1m candles but is thin for 1s-equivalent floor * 60 (a 60-minute bar).
+    expect(sentry(cand(0.9), { ...book, barMinutes: 1 }).checks[1].pass).toBe(true);
+    expect(sentry(cand(0.9), { ...book, barMinutes: 60 }).checks[1].pass).toBe(false);
+    expect(sentry(cand(0.9), { ...book, barMinutes: 1 / 60 }).checks[1].pass).toBe(true);
   });
   it('halts everything after the daily loss limit', () => {
     const v = sentry(cand(0.9), { ...book, dayPnl: -1000 * DEFAULT_SENTRY.dailyLossLimit });

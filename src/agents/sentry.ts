@@ -4,7 +4,7 @@ import type { Candidate } from './scout';
 
 export interface SentryConfig {
   minConfidence: number; // 0..1 signal strength
-  minBarVolume: number; // average quote volume per bar (USDT)
+  minBarVolume: number; // average quote volume per 1-minute bar (USDT); scaled for other timeframes
   maxAtrPct: number; // reject when a single bar's ATR exceeds this % of price
   maxOpen: number;
   dailyLossLimit: number; // fraction of day-start equity; breach halts all entries
@@ -40,13 +40,14 @@ export interface BookState {
   dayPnl: number;
   now: number;
   barMs: number; // wall-clock length of one bar (the simulator runs faster than real time)
+  barMinutes: number; // market time one bar represents, for scaling the liquidity floor
 }
 
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
 /** SENTRY has the last word before money moves: three checks on the setup, plus book-level vetoes. */
 export function sentry(c: Candidate, book: BookState, cfg: SentryConfig = DEFAULT_SENTRY): Verdict {
-  const checks = [confidence(c, cfg), liquidity(c, cfg), agreement(c)];
+  const checks = [confidence(c, cfg), liquidity(c, cfg, book.barMinutes), agreement(c)];
   const blockedBy = bookVeto(c, book, cfg);
   return { pass: !blockedBy && checks.every((k) => k.pass), checks, blockedBy };
 }
@@ -68,13 +69,14 @@ function confidence(c: Candidate, cfg: SentryConfig): Check {
   return { name: 'Confidence', score, pass, detail: `strength ${(c.signal.strength * 100).toFixed(0)}% · edge ${edge.toFixed(2)}R` };
 }
 
-function liquidity(c: Candidate, cfg: SentryConfig): Check {
+function liquidity(c: Candidate, cfg: SentryConfig, barMinutes: number): Check {
   const recent = c.candles.slice(-20);
   const avgVol = recent.reduce((s, k) => s + k.v, 0) / recent.length;
   const atrPct = (c.atr / c.price) * 100;
-  const volOk = avgVol >= cfg.minBarVolume;
+  const floor = cfg.minBarVolume * barMinutes;
+  const volOk = avgVol >= floor;
   const atrOk = atrPct <= cfg.maxAtrPct;
-  const score = clamp01(avgVol / (cfg.minBarVolume * 2)) * (atrOk ? 1 : 0.3);
+  const score = clamp01(avgVol / (floor * 2)) * (atrOk ? 1 : 0.3);
   return {
     name: 'Liquidity',
     score,
