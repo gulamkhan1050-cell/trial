@@ -5,6 +5,7 @@ import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, kellyChart, lineChart } from './charts';
+import { type MMArenaResult, runMMArena } from '../core/mmArena';
 import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, gridVariants, runArena } from '../core/arena';
 
 type Tab = 'desk' | 'grid' | 'arena' | 'markets' | 'forge' | 'log' | 'setup';
@@ -39,6 +40,18 @@ export class Dashboard {
   private symbol: string;
   private frame = 0;
   private body!: HTMLElement;
+  private mm: {
+    running: boolean;
+    progress: ArenaProgress | null;
+    results: MMArenaResult[] | null;
+    note: string;
+    error: string;
+    signal: { cancelled: boolean };
+    source: 'real' | 'sim';
+    hours: number;
+    coins: string;
+    fillProb: number;
+  } = { running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', hours: 6, coins: 'BTCUSDT,ETHUSDT,SOLUSDT', fillProb: 0.5 };
   private arena: {
     running: boolean;
     progress: ArenaProgress | null;
@@ -104,6 +117,7 @@ export class Dashboard {
     if (this.tab === 'arena') {
       if (full) this.body.innerHTML = this.arenaView();
       this.renderArenaLive();
+      this.renderMMLive();
       return;
     }
     const html = this.tab === 'desk' ? this.deskView() : this.tab === 'grid' ? this.gridView() : this.tab === 'markets' ? this.marketsView() : this.tab === 'forge' ? this.forgeView() : this.logView();
@@ -331,7 +345,102 @@ export class Dashboard {
         </div>
         <button class="run-arena" data-act="arena">${a.running ? '■ Cancel' : '▶ Run arena'}</button>
       </section>
-      <div id="arena-live"></div>`;
+      <div id="arena-live"></div>
+      <section class="card form">
+        <h3>Market maker · 1-second <span class="dim">two-sided quotes, every second</span></h3>
+        <p class="dim small">Rests a buy just under and a sell just over the price on each coin every second and earns the gap,
+        skewing quotes to shed inventory. Tuned per coin on the first quarter of the data, tested on the rest, at four maker-fee levels.</p>
+        <div class="arena-controls">
+          <label>Prices
+            <select data-mm="source">${opt('real', this.mm.source, 'Real Binance 1s history')}${opt('sim', this.mm.source, 'Offline simulator')}</select></label>
+          <label>Period
+            <select data-mm="hours">${opt(1, this.mm.hours, 'Last 1 hour')}${opt(6, this.mm.hours, 'Last 6 hours')}${opt(24, this.mm.hours, 'Last 24 hours')}</select></label>
+          <label>Coins
+            <select data-mm="coins">${opt('BTCUSDT', this.mm.coins, 'BTC')}${opt('BTCUSDT,ETHUSDT,SOLUSDT', this.mm.coins, 'BTC, ETH, SOL')}${opt(DEFAULT_SETTINGS.symbols.join(','), this.mm.coins, '6 majors')}</select></label>
+          <label>Fill chance when price trades through a quote
+            <select data-mm="fillProb">${opt(0.25, this.mm.fillProb, '25% (busy queue)')}${opt(0.5, this.mm.fillProb, '50%')}${opt(1, this.mm.fillProb, '100% (optimistic)')}</select></label>
+        </div>
+        <button class="run-arena" data-act="mm">${this.mm.running ? '■ Cancel' : '▶ Run market maker'}</button>
+      </section>
+      <div id="mm-live"></div>`;
+  }
+
+  private renderMMLive() {
+    const el = this.body.querySelector<HTMLElement>('#mm-live');
+    if (!el) return;
+    const m = this.mm;
+    const btn = this.body.querySelector<HTMLButtonElement>('[data-act=mm]');
+    if (btn) btn.textContent = m.running ? '■ Cancel' : '▶ Run market maker';
+    let html = '';
+    if (m.running && m.progress)
+      html += `<section class="card"><h3>Running <span class="dim">${esc(m.progress.stage)}</span></h3>
+        <div class="bar big"><i style="width:${Math.round(m.progress.pct * 100)}%"></i></div><p class="dim small">${esc(m.progress.text)}</p></section>`;
+    if (m.error) html += `<section class="card"><p class="down">${esc(m.error)}</p></section>`;
+    if (m.results?.length) {
+      const start = m.results[0].start;
+      html += `<section class="card"><h3>Market maker result <span class="dim">${esc(m.note)}</span></h3>
+        ${m.note.startsWith('offline') ? '<p class="warn small">Offline 1s prices are a random walk — use Real Binance 1s history to judge.</p>' : ''}
+        <canvas id="c-mm" class="chart tall"></canvas>
+        <p class="legend">${m.results.map((r, i) => `<i style="background:var(${ARENA_COLORS[i]})"></i>${esc(r.name)}`).join(' ')}</p></section>
+        <div class="split">${m.results
+          .map((r, i) => {
+            const pnl = r.final - start;
+            const trips = Math.max(1, r.fills / 2);
+            const coins = Object.entries(r.params)
+              .map(([sym, p]) => `${short(sym)} ±${(p.halfSpread * 100).toFixed(3)}%`)
+              .join(' · ');
+            return `<section class="card"><h3><span style="color:var(${ARENA_COLORS[i]})">${esc(r.name)}</span></h3>
+              <p class="big ${cls(pnl)}">${usd(r.final)} <small>${signed(pnl)} · ${pct(pnl / start, 2)}</small></p>
+              <div class="stats">
+                ${stat('Fills', r.fills.toLocaleString())}
+                ${stat('Volume', usd(r.volume))}
+                ${stat('Per round trip', `${pnl / trips >= 0 ? '+' : '-'}${(Math.abs(pnl / trips) * 100).toFixed(2)}¢`)}
+                ${stat('Fees', signed(-r.fees))}
+                ${stat('Max drawdown', pct(r.maxDrawdown, 2))}
+                ${stat('Stops', String(r.stops))}
+              </div><p class="dim small">quotes ${esc(coins)}</p></section>`;
+          })
+          .join('')}</div>`;
+    }
+    el.innerHTML = html;
+    const c = el.querySelector<HTMLCanvasElement>('#c-mm');
+    if (c && m.results?.length)
+      lineChart(c, m.results.map((r, i) => ({ values: r.equity.map((p) => p.v), color: ARENA_COLORS[i], width: 2 })), (v) => `$${v.toFixed(0)}`, m.results[0].start);
+  }
+
+  private async toggleMM() {
+    const m = this.mm;
+    if (m.running) {
+      m.signal.cancelled = true;
+      return;
+    }
+    Object.assign(m, { running: true, error: '', results: null, signal: { cancelled: false }, progress: { stage: 'download', pct: 0, text: 'starting…' } });
+    this.renderMMLive();
+    const g = this.engine.settings.grid;
+    // Rebate, zero, a typical VIP maker fee, and the user's own maker fee from Setup.
+    const fees = [...new Set([-0.00005, 0, 0.0001, g.maker])].sort((a, b) => a - b);
+    try {
+      const out = await runMMArena({
+        symbols: m.coins.split(','),
+        hours: m.hours,
+        source: m.source,
+        makerFees: fees,
+        takerFee: g.taker,
+        fillProb: m.fillProb,
+        capital: this.engine.settings.startBalance,
+        signal: m.signal,
+        onProgress: (p) => {
+          m.progress = p;
+          if (this.tab === 'arena') this.renderMMLive();
+        },
+      });
+      m.results = out.results;
+      m.note = out.note;
+    } catch (err) {
+      m.error = `Market maker failed: ${(err as Error).message}`;
+    }
+    m.running = false;
+    if (this.tab === 'arena') this.renderMMLive();
   }
 
   private renderArenaLive() {
@@ -660,6 +769,8 @@ export class Dashboard {
     } else if (el.dataset.act === 'toggle') {
       if (this.engine.running) this.engine.stop();
       else void this.engine.start();
+    } else if (el.dataset.act === 'mm') {
+      void this.toggleMM();
     } else if (el.dataset.act === 'arena') {
       void this.toggleArena();
     } else if (el.dataset.act === 'flatten') {
@@ -671,6 +782,15 @@ export class Dashboard {
 
   private onInput(ev: Event) {
     const el = ev.target as HTMLInputElement | HTMLSelectElement;
+    const mk = el.dataset.mm;
+    if (mk) {
+      const m = this.mm;
+      if (mk === 'source') m.source = el.value as 'real' | 'sim';
+      if (mk === 'hours') m.hours = Number(el.value);
+      if (mk === 'coins') m.coins = el.value;
+      if (mk === 'fillProb') m.fillProb = Number(el.value);
+      return;
+    }
     const ak = el.dataset.arena;
     if (ak) {
       const a = this.arena;

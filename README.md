@@ -26,6 +26,14 @@ The **Arena** tab replays the last 1, 3 or 7 days of real Binance 1m prices (or 
 as fast as the device can compute, and shows final balance, trades, win rate, drawdown and best/worst day.
 Offline-simulator results are not achievable in real markets; judge strategies on real history.
 
+### Market maker · 1-second
+
+Also in the Arena: a two-sided market maker that rests a bid and an ask around the price on each coin every second,
+earns the spread and skews quotes to shed inventory. It downloads real Binance **1-second** bars (1, 6 or 24 hours),
+tunes the spread per coin on the first quarter, tests on the rest, and compares four maker-fee levels (a rebate, 0%,
+0.01% and your own). A quote fills only when price trades through it, and only with the chosen probability, to stand in
+for queue position.
+
 ## Modes
 
 - **Binance live prices (default)** — real-time 1m candles from Binance's public market-data endpoints
