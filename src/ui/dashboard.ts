@@ -5,12 +5,14 @@ import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, kellyChart, lineChart } from './charts';
+import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, runArena } from '../core/arena';
 
-type Tab = 'desk' | 'grid' | 'markets' | 'forge' | 'log' | 'setup';
+type Tab = 'desk' | 'grid' | 'arena' | 'markets' | 'forge' | 'log' | 'setup';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'desk', label: 'Desk' },
   { id: 'grid', label: 'Grid' },
+  { id: 'arena', label: 'Arena' },
   { id: 'markets', label: 'Markets' },
   { id: 'forge', label: 'Forge' },
   { id: 'log', label: 'Log' },
@@ -37,6 +39,18 @@ export class Dashboard {
   private symbol: string;
   private frame = 0;
   private body!: HTMLElement;
+  private arena: {
+    running: boolean;
+    progress: ArenaProgress | null;
+    results: ArenaResult[] | null;
+    note: string;
+    error: string;
+    signal: { cancelled: boolean };
+    source: 'real' | 'sim';
+    days: number;
+    wide: boolean;
+    leverage: number;
+  } = { running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, wide: false, leverage: 3 };
 
   constructor(
     private root: HTMLElement,
@@ -83,6 +97,12 @@ export class Dashboard {
     // The setup form is rendered once per visit so typing is never interrupted.
     if (this.tab === 'setup') {
       if (full) this.body.innerHTML = this.setupView();
+      return;
+    }
+    // The arena form is also rendered once; only its results panel refreshes.
+    if (this.tab === 'arena') {
+      if (full) this.body.innerHTML = this.arenaView();
+      this.renderArenaLive();
       return;
     }
     const html = this.tab === 'desk' ? this.deskView() : this.tab === 'grid' ? this.gridView() : this.tab === 'markets' ? this.marketsView() : this.tab === 'forge' ? this.forgeView() : this.logView();
@@ -245,7 +265,7 @@ export class Dashboard {
     return `
       <section class="kpis">
         ${kpi('Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${tot.roundTrips} round trips · all markets`)}
-        ${kpi('Ladders armed', `${tot.armed}/${tot.markets}`, `${tot.holding} holding coins`)}
+        ${kpi('Ladders armed', `${tot.armed}/${tot.markets}`, `${tot.holding} holding · ${e.settings.grid.leverage}× leverage`)}
         ${kpi('Inventory', usd(tot.inventory), `open ${signed(open)}`)}
         ${kpi('Fees', `${(e.settings.grid.maker * 200).toFixed(2)}%`, 'maker, per round trip')}
       </section>
@@ -284,6 +304,124 @@ export class Dashboard {
         <h3>Execution log <span class="dim">all markets</span></h3>
         ${this.logList(14)}
       </section>`;
+  }
+
+  // ------------------------------------------------------------ ARENA
+
+  private arenaView(): string {
+    const a = this.arena;
+    const opt = (v: string | number, cur: string | number, label: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
+    return `
+      <section class="card form">
+        <h3>Arena <span class="dim">same prices, both strategies, full speed</span></h3>
+        <p class="dim small">Replays a past stretch of market bar by bar through NORMAL (directional agents) and MICRO (a grid on every market),
+        each with its own $${this.engine.settings.startBalance} paper account, and shows what each would have made.</p>
+        <div class="arena-controls">
+          <label>Prices
+            <select data-arena="source">${opt('real', a.source, 'Real Binance history')}${opt('sim', a.source, 'Offline simulator')}</select></label>
+          <label>Period
+            <select data-arena="days">${opt(1, a.days, 'Last 1 day')}${opt(3, a.days, 'Last 3 days')}${opt(7, a.days, 'Last 7 days')}</select></label>
+          <label>Markets
+            <select data-arena="wide">${opt('0', a.wide ? '1' : '0', '6 majors')}${opt('1', a.wide ? '1' : '0', '15 coins')}</select></label>
+          <label>Grid leverage
+            <select data-arena="leverage">${opt(1, a.leverage, '1×')}${opt(2, a.leverage, '2×')}${opt(3, a.leverage, '3×')}</select></label>
+        </div>
+        <button class="run-arena" data-act="arena">${a.running ? '■ Cancel' : '▶ Run arena'}</button>
+      </section>
+      <div id="arena-live"></div>`;
+  }
+
+  private renderArenaLive() {
+    const el = this.body.querySelector<HTMLElement>('#arena-live');
+    if (!el) return;
+    const a = this.arena;
+    const btn = this.body.querySelector<HTMLButtonElement>('[data-act=arena]');
+    if (btn) btn.textContent = a.running ? '■ Cancel' : '▶ Run arena';
+    let html = '';
+    if (a.running && a.progress) {
+      html += `<section class="card"><h3>Running <span class="dim">${esc(a.progress.stage)}</span></h3>
+        <div class="bar big"><i style="width:${Math.round(a.progress.pct * 100)}%"></i></div>
+        <p class="dim small">${esc(a.progress.text)}</p></section>`;
+    }
+    if (a.error) html += `<section class="card"><p class="down">${esc(a.error)}</p></section>`;
+    if (a.results) {
+      const start = a.results[0].start;
+      const best = [...a.results].sort((x, y) => y.final - x.final)[0];
+      html += `<section class="card"><h3>Result <span class="dim">${esc(a.note)}</span></h3>
+        <p class="big ${cls(best.final - start)}">${esc(best.name.split(' · ')[0])} ${best.final >= start ? 'wins' : 'loses least'}: ${signed(best.final - start)}</p>
+        ${
+          a.source === 'real' && a.note.startsWith('offline')
+            ? '<p class="down small">Binance could not be reached, so this ran on the offline simulator instead of real prices.</p>'
+            : ''
+        }
+        ${
+          a.note.startsWith('offline')
+            ? '<p class="warn small">Offline simulator prices are synthetic and trend far harder than real markets — these numbers are not achievable. Use Real Binance history to judge a strategy.</p>'
+            : ''
+        }
+        <canvas id="c-arena" class="chart tall"></canvas>
+        <p class="legend"><i style="background:var(--scout)"></i>${esc(a.results[0].name)} <i style="background:var(--hawk)"></i>${esc(a.results[1]?.name ?? '')}</p>
+      </section>
+      <div class="split">${a.results
+        .map(
+          (r, i) => `<section class="card"><h3><span style="color:var(${i ? '--hawk' : '--scout'})">${esc(r.name)}</span></h3>
+            <p class="big ${cls(r.final - start)}">${usd(r.final)} <small>${signed(r.final - start)} · ${pct((r.final - start) / start, 1)}</small></p>
+            <div class="stats">
+              ${stat('Trades', r.trades.toLocaleString())}
+              ${stat('Win rate', pct(r.winRate))}
+              ${stat('Max drawdown', pct(r.maxDrawdown, 1))}
+              ${stat('Best day', signed(r.bestDay))}
+              ${stat('Worst day', signed(r.worstDay))}
+              ${stat('Per day', signed((r.final - start) / Math.max(1, r.equity.length ? (r.equity[r.equity.length - 1].t - r.equity[0].t) / 86_400_000 : 1)))}
+            </div></section>`,
+        )
+        .join('')}</div>`;
+    }
+    el.innerHTML = html;
+    const c = el.querySelector<HTMLCanvasElement>('#c-arena');
+    if (c && a.results) {
+      lineChart(
+        c,
+        a.results.map((r, i) => ({ values: r.equity.map((p) => p.v), color: i ? '--hawk' : '--scout', width: 2 })),
+        (v) => `$${Math.round(v).toLocaleString()}`,
+        a.results[0].start,
+      );
+    }
+  }
+
+  private async toggleArena() {
+    const a = this.arena;
+    if (a.running) {
+      a.signal.cancelled = true;
+      return;
+    }
+    a.running = true;
+    a.error = '';
+    a.results = null;
+    a.signal = { cancelled: false };
+    a.progress = { stage: 'download', pct: 0, text: 'starting…' };
+    this.renderArenaLive();
+    const base = this.engine.settings;
+    try {
+      const out = await runArena({
+        symbols: a.wide ? WIDE_MARKETS : DEFAULT_SETTINGS.symbols,
+        days: a.days,
+        source: a.source,
+        base: { ...base, grid: { ...base.grid, leverage: a.leverage } },
+        contestants: ARENA_CONTESTANTS,
+        signal: a.signal,
+        onProgress: (p) => {
+          a.progress = p;
+          if (this.tab === 'arena') this.renderArenaLive();
+        },
+      });
+      a.results = out.results;
+      a.note = out.note + (a.signal.cancelled ? ' · cancelled early' : '');
+    } catch (err) {
+      a.error = `Arena failed: ${(err as Error).message}`;
+    }
+    a.running = false;
+    if (this.tab === 'arena') this.renderArenaLive();
   }
 
   // ------------------------------------------------------------ MARKETS
@@ -460,6 +598,8 @@ export class Dashboard {
           </select></label>
         <label>Maker fee % (grid fills)
           <input type="number" step="0.01" min="0" max="1" data-set="grid.maker" value="${pctInput(s.grid.maker)}"></label>
+        <label>Grid leverage (× the bank spread across all grids — multiplies losses too)
+          <input type="number" step="0.5" min="1" max="5" data-set="grid.leverage" value="${s.grid.leverage}"></label>
         <label>Taker fee % (stop-outs)
           <input type="number" step="0.01" min="0" max="1" data-set="grid.taker" value="${pctInput(s.grid.taker)}"></label>
       </section>
@@ -509,11 +649,15 @@ export class Dashboard {
       this.symbol = el.dataset.sym;
       this.renderTab(true);
     } else if (el.dataset.preset) {
-      this.engine.updateSettings(PRESETS[el.dataset.preset]);
+      const preset = PRESETS[el.dataset.preset];
+      // Presets set grid leverage but keep the user's own fee settings.
+      this.engine.updateSettings(preset.grid ? { ...preset, grid: { ...this.engine.settings.grid, leverage: preset.grid.leverage } } : preset);
       this.renderTab(true);
     } else if (el.dataset.act === 'toggle') {
       if (this.engine.running) this.engine.stop();
       else void this.engine.start();
+    } else if (el.dataset.act === 'arena') {
+      void this.toggleArena();
     } else if (el.dataset.act === 'flatten') {
       void this.engine.closeAll();
     } else if (el.dataset.act === 'reset') {
@@ -523,6 +667,15 @@ export class Dashboard {
 
   private onInput(ev: Event) {
     const el = ev.target as HTMLInputElement | HTMLSelectElement;
+    const ak = el.dataset.arena;
+    if (ak) {
+      const a = this.arena;
+      if (ak === 'source') a.source = el.value as 'real' | 'sim';
+      if (ak === 'days') a.days = Number(el.value);
+      if (ak === 'wide') a.wide = el.value === '1';
+      if (ak === 'leverage') a.leverage = Number(el.value);
+      return;
+    }
     const key = el.dataset.set;
     if (!key) return;
     const s = this.engine.settings;
@@ -533,6 +686,9 @@ export class Dashboard {
         break;
       case 'strategy':
         this.engine.updateSettings({ strategy: el.value as Settings['strategy'] });
+        break;
+      case 'grid.leverage':
+        if (num >= 1 && num <= 5) this.engine.updateSettings({ grid: { ...s.grid, leverage: num } });
         break;
       case 'grid.maker':
       case 'grid.taker':
@@ -625,7 +781,8 @@ const DEFAULT_POP = 40;
 const WIDE_MARKETS = [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'];
 
 const PRESETS: Record<string, Partial<Settings>> = {
-  grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, sentry: { ...DEFAULT_SENTRY } },
+  // 3× matches HAWK's leverage cap, so grid and directional results compare like for like.
+  grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: { ...DEFAULT_SETTINGS.grid, leverage: 3 }, sentry: { ...DEFAULT_SENTRY } },
   replay: { feed: 'replay', strategy: 'agents', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
   fast: {
     feed: 'binance',

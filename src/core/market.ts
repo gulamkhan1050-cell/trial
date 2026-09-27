@@ -172,7 +172,7 @@ export class ReplayFeed implements MarketFeed {
 }
 
 /** Candle as it would look after `step` of 4 ticks: open → first extreme → second extreme → close. */
-function partial(k: Candle, step: number): Candle {
+export function partial(k: Candle, step: number): Candle {
   if (step >= 4) return k;
   const upFirst = k.c < k.o; // a red bar usually tags its high first
   const path = upFirst ? [k.o, k.h, k.l] : [k.o, k.l, k.h];

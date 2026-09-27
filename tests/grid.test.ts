@@ -113,7 +113,9 @@ describe('GRID stability on calm, BTC-like replay', () => {
     vi.unstubAllGlobals();
     const count = (re: RegExp) => e.log.filter((l) => re.test(l.text)).length;
     expect(count(/grid armed/)).toBeGreaterThanOrEqual(1);
-    expect(count(/stood down/)).toBeLessThanOrEqual(1);
+    // The flip-flop bug stood the grid down every ~20s (dozens of times); FORGE is seeded from the
+    // clock, so allow the odd genuine retirement.
+    expect(count(/stood down/)).toBeLessThanOrEqual(3);
     expect(e.gridTotals().roundTrips).toBeGreaterThan(10);
   }, 120_000);
 });

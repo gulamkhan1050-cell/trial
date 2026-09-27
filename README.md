@@ -19,6 +19,13 @@ Grid profit only exists if the step clears round-trip fees — set your exchange
 Screens: **Desk** (balance, PnL, pipeline, SENTRY checks, positions, log) · **Markets** (live candles with entry/stop/target) ·
 **Grid** (order ladder, grid levels, genome) · **Forge** (generation, kill rate, fitness curve, selection funnel, Kelly curve, genome) · **Log** · **Setup**.
 
+## Arena
+
+The **Arena** tab replays the last 1, 3 or 7 days of real Binance 1m prices (or the offline simulator) through
+**NORMAL** (directional agents) and **MICRO** (a grid on every market) side by side, each with its own paper account,
+as fast as the device can compute, and shows final balance, trades, win rate, drawdown and best/worst day.
+Offline-simulator results are not achievable in real markets; judge strategies on real history.
+
 ## Modes
 
 - **Binance live prices (default)** — real-time 1m candles from Binance's public market-data endpoints

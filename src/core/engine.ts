@@ -36,7 +36,7 @@ export interface Settings {
   startBalance: number;
   symbols: string[];
   strategy: 'agents' | 'grid'; // directional agents, or the GRID micro-trading engine
-  grid: { maker: number; taker: number }; // a grid runs on every market in `symbols`
+  grid: { maker: number; taker: number; leverage: number }; // a grid runs on every market in `symbols`
   sentry: SentryConfig;
   hawk: HawkConfig;
 }
@@ -50,7 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sentry: DEFAULT_SENTRY,
   hawk: DEFAULT_HAWK,
   strategy: 'agents',
-  grid: { ...DEFAULT_GRID_FEES },
+  grid: { ...DEFAULT_GRID_FEES, leverage: 1 },
 };
 
 export interface SymbolState {
@@ -102,12 +102,17 @@ export class Engine {
   dayStartEquity = 0;
   dayPnl = 0;
   vetoes = 0;
+  /** Lifetime counts (the trade list itself is capped). */
+  tradeCount = 0;
+  winCount = 0;
   /** One grid per market: its own FORGE population, ladder and SENTRY state. */
   grids = new Map<string, GridSlot>();
   private gridBars = 0;
 
   private feed: MarketFeed | null = null;
   private clock = 0;
+  /** Set by the Arena: FORGE runs only when forgeOnce() is called, not on a timer. */
+  manualForge = false;
   private session = 0;
   private broker: Broker = new PaperBroker();
   private rand = mulberry32(Date.now() % 1e9);
@@ -139,7 +144,8 @@ export class Engine {
     for (const fn of this.listeners) fn();
   }
 
-  async start() {
+  /** `feedOverride` lets the Arena supply history itself and push bars with ingest(). */
+  async start(feedOverride?: MarketFeed) {
     if (this.running) return;
     // Simulated and replayed prices don't continue from one run to the next, so positions
     // carried over would be marked against a different market. Every such run starts a fresh book.
@@ -173,7 +179,7 @@ export class Engine {
     const live = () => session === this.session;
     const handlers = {
       onHistory: (s: string, c: Candle[]) => live() && this.onHistory(s, c),
-      onCandle: (s: string, c: Candle, closed: boolean) => void (live() && this.onCandle(s, c, closed)),
+      onCandle: (s: string, c: Candle, closed: boolean) => void (live() && this.ingest(s, c, closed)),
       onStatus: (st: FeedStatus, d: string) => {
         if (!live()) return;
         this.feedStatus = st;
@@ -182,12 +188,12 @@ export class Engine {
       },
     };
 
-    this.feed =
-      this.settings.feed === 'sim'
+    this.feed = feedOverride ??
+      (this.settings.feed === 'sim'
         ? new SimFeed(this.settings.simBarMs)
         : this.settings.feed === 'replay'
           ? new ReplayFeed(this.settings.simBarMs)
-          : new BinanceFeed({ ...BINANCE_PUBLIC, interval: this.settings.interval });
+          : new BinanceFeed({ ...BINANCE_PUBLIC, interval: this.settings.interval }));
     this.feedName = this.feed.name;
     try {
       await this.feed.start(this.settings.symbols, handlers);
@@ -265,6 +271,8 @@ export class Engine {
     this.equity = [{ t: Date.now(), v: this.balance }];
     this.dayKey = '';
     this.vetoes = 0;
+    this.tradeCount = 0;
+    this.winCount = 0;
     this.lastGate = null;
     this.grids = new Map();
     this.rollDay();
@@ -357,7 +365,8 @@ export class Engine {
     this.emit();
   }
 
-  private async onCandle(symbol: string, candle: Candle, closed: boolean) {
+  /** Apply one candle update (forming tick or closed bar). Feeds call this; the Arena awaits it directly. */
+  async ingest(symbol: string, candle: Candle, closed: boolean) {
     const s = this.symbols.get(symbol);
     if (!s || !this.running) return;
     s.forming = closed ? null : candle;
@@ -482,6 +491,7 @@ export class Engine {
       reason,
     };
     this.trades.unshift(trade);
+    this.countTrade(trade.pnl);
     this.trades.length = Math.min(this.trades.length, 300);
     const sym = this.symbols.get(p.symbol);
     if (sym) sym.stage = 'idle';
@@ -506,8 +516,13 @@ export class Engine {
   // ------------------------------------------------------------ FORGE (evolution)
 
   private scheduleForge(ms: number) {
-    if (!this.running) return;
+    if (!this.running || this.manualForge) return;
     this.forgeTimer = setTimeout(() => this.forgeTick(), ms);
+  }
+
+  /** One FORGE generation for the next market in the rotation (used by the Arena). */
+  forgeOnce() {
+    this.forgeTick();
   }
 
   private forgeTick() {
@@ -573,6 +588,7 @@ export class Engine {
     const rt = f.roundTrip!;
     const now = this.marketNow();
     g.roundTrips++;
+    this.countTrade(rt.pnl);
     this.trades.unshift({
       id: uid('t'),
       symbol: sym,
@@ -637,8 +653,8 @@ export class Engine {
       return;
     }
     const genome = champ!.genome;
-    // Each market gets an equal slice of the bank.
-    const capital = this.totalEquity() / Math.max(1, this.grids.size);
+    // Each market gets an equal slice of the bank, times the grid leverage (perp-style margin).
+    const capital = (this.totalEquity() * Math.max(1, this.settings.grid.leverage)) / Math.max(1, this.grids.size);
     g.bot = bot ?? new GridBot(genome, this.gridFees());
     g.bot.genome = genome;
     g.bot.fees = this.gridFees();
@@ -669,6 +685,11 @@ export class Engine {
         (benched ? ` · ${benched} waiting` : '') +
         (trails ? ` · trailed up ${trails}× as prices rose` : ''),
     );
+  }
+
+  private countTrade(pnl: number) {
+    this.tradeCount++;
+    if (pnl > 0) this.winCount++;
   }
 
   gridFees() {
@@ -717,7 +738,8 @@ export class Engine {
   }
 
   private rollDay() {
-    const key = new Date().toDateString();
+    // Market clock, so replays and the Arena roll days with the data, not the wall clock.
+    const key = new Date(this.marketNow()).toDateString();
     if (key !== this.dayKey) {
       this.dayKey = key;
       this.dayStartEquity = this.totalEquity();
