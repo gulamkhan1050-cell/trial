@@ -33,6 +33,7 @@ describe('saved settings', () => {
     const s = loadSettings();
     vi.unstubAllGlobals();
     expect(s.strategy).toBe('grid');
-    expect(s.grid).toMatchObject({ leverage: 3, crashGuard: false, maker: 0.0001, taker: 0.0004 });
+    expect(s.grid).toMatchObject({ leverage: 3, crashGuard: true, crashDrop: 0.025, maker: 0.0001, taker: 0.0004 });
+    expect(s.symbols).toHaveLength(15);
   });
 });

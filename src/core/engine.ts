@@ -50,18 +50,25 @@ export interface Settings {
   hawk: HawkConfig;
 }
 
+export const MAJORS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
+export const WIDE_MARKETS = [...MAJORS, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'];
+
+/** Bumped when defaults change for evidence-based reasons; older saved settings are migrated once. */
+const SETTINGS_VERSION = 2;
+
 export const DEFAULT_SETTINGS: Settings = {
   feed: 'replay',
   interval: '1m',
   simBarMs: 1500,
   startBalance: 1000,
-  symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'],
+  // Real 7-day Arena runs: grids on 15 coins made 4-23% (by leverage) where 6 majors made 0-4%.
+  symbols: WIDE_MARKETS,
   sentry: DEFAULT_SENTRY,
   hawk: DEFAULT_HAWK,
   strategy: 'grid',
-  // Defaults follow the Arena on a real week (6 majors): 3x unguarded grid was the only profitable setup,
-  // and a 1%/15-bar guard fired on ordinary volatility, so the guard is off and looser when enabled.
-  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: false, crashDrop: 0.025, crashBars: 30, crashShare: 0.67 },
+  // Real-week Arena runs: the 3x grid was the best risk/return; a 1%/15-bar guard fired on ordinary
+  // volatility and cost money, while the loose 2.5%/30-bar guard cost ~0.4% and trimmed drawdown.
+  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: true, crashDrop: 0.025, crashBars: 30, crashShare: 0.67 },
 };
 
 export interface SymbolState {
@@ -881,11 +888,13 @@ function load<T>(key: string): T | null {
 
 export function loadSettings(): Settings {
   const s = load<Partial<Settings>>('swarmdesk:settings');
-  // Settings saved before the real-week Arena results (no crashDrop yet) move to the new
-  // defaults — grid at 3x, guard off — keeping only the user's own fees.
-  if (s?.grid && (s.grid as Partial<Settings['grid']>).crashDrop === undefined) {
-    s.strategy = DEFAULT_SETTINGS.strategy;
-    s.grid = { ...DEFAULT_SETTINGS.grid, maker: s.grid.maker ?? DEFAULT_SETTINGS.grid.maker, taker: s.grid.taker ?? DEFAULT_SETTINGS.grid.taker };
+  // Settings saved under older defaults move to the current evidence-based ones once
+  // (grid, 15 coins, 3x, loose guard), keeping only the user's own fees.
+  const saved = s as (Partial<Settings> & { version?: number }) | null;
+  if (saved && (saved.version ?? 1) < SETTINGS_VERSION) {
+    saved.strategy = DEFAULT_SETTINGS.strategy;
+    saved.symbols = DEFAULT_SETTINGS.symbols;
+    saved.grid = { ...DEFAULT_SETTINGS.grid, maker: saved.grid?.maker ?? DEFAULT_SETTINGS.grid.maker, taker: saved.grid?.taker ?? DEFAULT_SETTINGS.grid.taker };
   }
   return {
     ...DEFAULT_SETTINGS,
@@ -897,7 +906,7 @@ export function loadSettings(): Settings {
 }
 
 export function saveSettings(s: Settings) {
-  store('swarmdesk:settings', s);
+  store('swarmdesk:settings', { ...s, version: SETTINGS_VERSION });
 }
 
 export function fmtPrice(x: number): string {

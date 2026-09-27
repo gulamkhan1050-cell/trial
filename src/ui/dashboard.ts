@@ -1,6 +1,6 @@
 import { unrealized } from '../agents/hawk';
 import { DEFAULT_SENTRY } from '../agents/sentry';
-import { DEFAULT_SETTINGS, type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
+import { DEFAULT_SETTINGS, MAJORS, WIDE_MARKETS, type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
 import { GENE_RANGES } from '../core/evolver';
 import { edgeStats, sizedRisk } from '../core/kelly';
 import type { AgentId } from '../core/types';
@@ -64,7 +64,7 @@ export class Dashboard {
     wide: boolean;
     leverage: number;
     variants: boolean;
-  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, wide: false, leverage: 3 };
+  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, wide: true, leverage: 3 };
 
   constructor(
     private root: HTMLElement,
@@ -356,7 +356,7 @@ export class Dashboard {
           <label>Period
             <select data-mm="hours">${opt(1, this.mm.hours, 'Last 1 hour')}${opt(6, this.mm.hours, 'Last 6 hours')}${opt(24, this.mm.hours, 'Last 24 hours')}</select></label>
           <label>Coins
-            <select data-mm="coins">${opt('BTCUSDT', this.mm.coins, 'BTC')}${opt('BTCUSDT,ETHUSDT,SOLUSDT', this.mm.coins, 'BTC, ETH, SOL')}${opt(DEFAULT_SETTINGS.symbols.join(','), this.mm.coins, '6 majors')}</select></label>
+            <select data-mm="coins">${opt('BTCUSDT', this.mm.coins, 'BTC')}${opt('BTCUSDT,ETHUSDT,SOLUSDT', this.mm.coins, 'BTC, ETH, SOL')}${opt(MAJORS.join(','), this.mm.coins, '6 majors')}</select></label>
           <label>Fill chance when price trades through a quote
             <select data-mm="fillProb">${opt(0.25, this.mm.fillProb, '25% (busy queue)')}${opt(0.5, this.mm.fillProb, '50%')}${opt(1, this.mm.fillProb, '100% (optimistic)')}</select></label>
         </div>
@@ -517,7 +517,7 @@ export class Dashboard {
     const base = this.engine.settings;
     try {
       const out = await runArena({
-        symbols: a.wide ? WIDE_MARKETS : DEFAULT_SETTINGS.symbols,
+        symbols: a.wide ? WIDE_MARKETS : MAJORS,
         days: a.days,
         source: a.source,
         base: { ...base, grid: { ...base.grid, leverage: a.leverage } },
@@ -671,11 +671,13 @@ export class Dashboard {
       <section class="card">
         <h3>Presets <span class="dim">paper only</span></h3>
         <div class="presets">
-          <button class="ghost" data-preset="grid">▦ Grid micro-trading — replay</button>
-          <button class="ghost" data-preset="replay">⏩ Replay real market — fast</button>
-          <button class="ghost" data-preset="fast">⚡ Live — 15 markets, looser gate</button>
-          <button class="ghost" data-preset="standard">Live standard — 6 markets, default gate</button>
+          <button class="ghost primary" data-preset="live">★ Live grid — 15 coins, 3×, real-time paper</button>
+          <button class="ghost" data-preset="grid">▦ Grid — replay last ~30h fast</button>
+          <button class="ghost" data-preset="replay">⏩ Directional — replay</button>
+          <button class="ghost" data-preset="fast">Directional live — 15 markets</button>
+          <button class="ghost" data-preset="standard">Directional live — 6 majors</button>
         </div>
+        <p class="dim small">★ is the best risk/return from the real 7-day Arena runs so far (15 coins: +13.7% at 3×, worst drop ~9%). Directional agents lost 30–35% in every real run.</p>
         <p class="dim small">Grid micro-trading runs a ladder of limit buys on each of 15 coins, with an equal slice of the bank each; every fill gets a take-profit one step higher,
         so every small bounce books a small profit at maker fees. It earns in ranges and is stopped out in hard sell-offs.</p>
         <p class="dim small">Replay fast-forwards the last ~2 days of real 1m prices (1 bar every 1.5s) — the same thing the "session replay" dashboards show.
@@ -771,7 +773,8 @@ export class Dashboard {
     } else if (el.dataset.preset) {
       const preset = PRESETS[el.dataset.preset];
       // Presets set grid leverage but keep the user's own fee settings.
-      this.engine.updateSettings(preset.grid ? { ...preset, grid: { ...this.engine.settings.grid, leverage: preset.grid.leverage } } : preset);
+      const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
+      this.engine.updateSettings(preset.grid ? { ...preset, grid: { ...preset.grid, ...fees } } : preset);
       this.renderTab(true);
     } else if (el.dataset.act === 'toggle') {
       if (this.engine.running) this.engine.stop();
@@ -917,11 +920,10 @@ export class Dashboard {
 const DEFAULT_POP = 40;
 const ARENA_COLORS = ['--scout', '--hawk', '--forge', '--warn', '--down'];
 
-const WIDE_MARKETS = [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'];
-
 const PRESETS: Record<string, Partial<Settings>> = {
-  // 3× matches HAWK's leverage cap, so grid and directional results compare like for like.
-  grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: { ...DEFAULT_SETTINGS.grid, leverage: 3 }, sentry: { ...DEFAULT_SENTRY } },
+  // The setup that won the real-week Arena, on live real-time prices (paper fills).
+  live: { feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: DEFAULT_SETTINGS.grid, sentry: { ...DEFAULT_SENTRY } },
+  grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: DEFAULT_SETTINGS.grid, sentry: { ...DEFAULT_SENTRY } },
   replay: { feed: 'replay', strategy: 'agents', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
   fast: {
     feed: 'binance',
@@ -930,7 +932,7 @@ const PRESETS: Record<string, Partial<Settings>> = {
     symbols: WIDE_MARKETS,
     sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 5, maxOpen: 5 },
   },
-  standard: { feed: 'binance', strategy: 'agents', interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
+  standard: { feed: 'binance', strategy: 'agents', interval: '1m', symbols: MAJORS, sentry: { ...DEFAULT_SENTRY } },
 };
 
 /** Fraction → percent for a form field, without float noise like 55.00000000000001. */

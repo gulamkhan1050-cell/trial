@@ -144,3 +144,4 @@ table.grid tr.buy td:first-child { color: var(--up); }
 .tabs { overflow-x: auto; }
 .tabs button { min-width: 54px; }
 .warn { color: var(--warn); }
+.ghost.primary { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); font-weight: 600; }
