@@ -1,7 +1,7 @@
 import { gauss, mulberry32 } from './rng';
 import type { Candle } from './types';
 
-export type FeedStatus = 'connecting' | 'live' | 'sim' | 'error';
+export type FeedStatus = 'connecting' | 'live' | 'sim' | 'replay' | 'error';
 
 export interface FeedHandlers {
   /** Full history for a symbol (bootstrap). */
@@ -92,6 +92,90 @@ export class BinanceFeed implements MarketFeed {
     this.socket?.close();
     this.socket = null;
   }
+}
+
+// ---------------------------------------------------------------- Replay (real history, fast-forwarded)
+
+/**
+ * Downloads recent real 1m candles from Binance and plays them back at simulator speed.
+ * The first `warmup` bars are handed over as history (so FORGE has data to evolve on);
+ * the rest are replayed bar by bar, each split into open → extreme → extreme → close ticks.
+ */
+export class ReplayFeed implements MarketFeed {
+  readonly name = 'Replay';
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    private barMs = 1500,
+    private pages = 3, // 1000 bars each ≈ 50 hours of 1m data
+    private warmup = 600,
+    private opt: BinanceFeedOptions = BINANCE_PUBLIC,
+  ) {}
+
+  async start(symbols: string[], h: FeedHandlers): Promise<void> {
+    h.onStatus('connecting', 'downloading history');
+    const data = await Promise.all(symbols.map((s) => this.download(s)));
+    const len = Math.min(...data.map((d) => d.length));
+    if (len < this.warmup + 50) throw new Error('not enough history for replay');
+    // Align every symbol on the same most-recent `len` bars.
+    const series = data.map((d) => d.slice(d.length - len));
+    symbols.forEach((s, i) => h.onHistory(s, series[i].slice(0, this.warmup)));
+
+    let bar = this.warmup;
+    let tick = 0;
+    const total = len - this.warmup;
+    const show = () =>
+      h.onStatus('replay', `bar ${bar - this.warmup}/${total} · ${new Date(series[0][Math.min(bar, len - 1)].t).toLocaleString()}`);
+    show();
+    this.timer = setInterval(() => {
+      if (bar >= len) {
+        this.stop();
+        h.onStatus('replay', 'replay finished — press STOP then START to replay again');
+        return;
+      }
+      tick++;
+      symbols.forEach((s, i) => {
+        const k = series[i][bar];
+        h.onCandle(s, partial(k, tick), tick === 4);
+      });
+      if (tick === 4) {
+        tick = 0;
+        bar++;
+        if (bar % 10 === 0) show();
+      }
+    }, this.barMs / 4);
+  }
+
+  private async download(symbol: string): Promise<Candle[]> {
+    let end: number | undefined;
+    const out: Candle[] = [];
+    for (let p = 0; p < this.pages; p++) {
+      const url = `${this.opt.rest}/api/v3/klines?symbol=${symbol}&interval=1m&limit=1000${end ? `&endTime=${end}` : ''}`;
+      const res = await fetchWithTimeout(url, 15000);
+      if (!res.ok) throw new Error(`${symbol}: HTTP ${res.status}`);
+      const rows = ((await res.json()) as RawKline[]).map(parseKline);
+      if (!rows.length) break;
+      out.unshift(...rows);
+      end = rows[0].t - 1;
+    }
+    // Drop the still-forming last bar.
+    return out.slice(0, -1);
+  }
+
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+/** Candle as it would look after `step` of 4 ticks: open → first extreme → second extreme → close. */
+function partial(k: Candle, step: number): Candle {
+  if (step >= 4) return k;
+  const upFirst = k.c < k.o; // a red bar usually tags its high first
+  const path = upFirst ? [k.o, k.h, k.l] : [k.o, k.l, k.h];
+  const seen = path.slice(0, step + 1);
+  const last = seen[seen.length - 1];
+  return { t: k.t, o: k.o, h: Math.max(...seen), l: Math.min(...seen), c: last, v: (k.v * step) / 4 };
 }
 
 function parseKline(r: RawKline): Candle {

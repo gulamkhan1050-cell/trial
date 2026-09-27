@@ -39,6 +39,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .pill.live { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, transparent); }
 .pill.sim { color: var(--forge); border-color: color-mix(in srgb, var(--forge) 40%, transparent); }
 .pill.paper { color: var(--warn); }
+.pill.replay { color: var(--scout); border-color: color-mix(in srgb, var(--scout) 40%, transparent); }
 .pill.error, .pill.connecting { color: var(--warn); }
 .run { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 5px 10px; font-family: var(--mono); font-size: 11px; color: var(--up); }
 .run.on { color: var(--down); }

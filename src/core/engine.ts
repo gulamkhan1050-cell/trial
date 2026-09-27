@@ -3,11 +3,13 @@ import { DEFAULT_SENTRY, type SentryConfig, sentry, type Verdict } from '../agen
 import { DEFAULT_HAWK, type HawkConfig, manage, plan, unrealized } from '../agents/hawk';
 import { PaperBroker } from './broker';
 import { DEFAULT_EVOLVER, type EvolverState, newEvolver, type Scored, step } from './evolver';
-import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, SimFeed } from './market';
+import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, ReplayFeed, SimFeed } from './market';
 import { mulberry32, uid } from './rng';
 import type { AgentId, Broker, Candle, LogEntry, Position, Signal, Trade } from './types';
 
-export type FeedMode = 'binance' | 'sim';
+export type FeedMode = 'binance' | 'replay' | 'sim';
+
+export const FEED_LABEL: Record<FeedMode, string> = { binance: 'live data', replay: 'replay of real history', sim: 'simulator' };
 export type Stage = 'idle' | 'read' | 'gate' | 'veto' | 'execute' | 'hold';
 
 export interface Settings {
@@ -21,7 +23,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  feed: 'binance',
+  feed: 'replay',
   interval: '1m',
   simBarMs: 1500,
   startBalance: 1000,
@@ -77,6 +79,7 @@ export class Engine {
   vetoes = 0;
 
   private feed: MarketFeed | null = null;
+  private clock = 0;
   private broker: Broker = new PaperBroker();
   private rand = mulberry32(Date.now() % 1e9);
   private forgeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -111,6 +114,7 @@ export class Engine {
     if (this.running) return;
     this.running = true;
     this.startedAt = Date.now();
+    this.clock = 0;
     this.symbols.clear();
     for (const s of this.settings.symbols) {
       this.symbols.set(s, {
@@ -123,7 +127,7 @@ export class Engine {
       });
     }
     this.seedChampions();
-    this.say('SCOUT', 'info', `session start · ${this.settings.symbols.length} markets · ${this.settings.feed === 'sim' ? 'simulator' : 'live data'}`);
+    this.say('SCOUT', 'info', `session start · ${this.settings.symbols.length} markets · ${FEED_LABEL[this.settings.feed]}`);
 
     const handlers = {
       onHistory: (s: string, c: Candle[]) => this.onHistory(s, c),
@@ -135,9 +139,12 @@ export class Engine {
       },
     };
 
-    this.feed = this.settings.feed === 'sim'
+    this.feed =
+      this.settings.feed === 'sim'
         ? new SimFeed(this.settings.simBarMs)
-        : new BinanceFeed({ ...BINANCE_PUBLIC, interval: this.settings.interval });
+        : this.settings.feed === 'replay'
+          ? new ReplayFeed(this.settings.simBarMs)
+          : new BinanceFeed({ ...BINANCE_PUBLIC, interval: this.settings.interval });
     this.feedName = this.feed.name;
     try {
       await this.feed.start(this.settings.symbols, handlers);
@@ -206,12 +213,22 @@ export class Engine {
 
   /** Wall-clock length of one bar on the running feed. */
   barMs(): number {
-    return this.feedName === 'Simulator' ? this.settings.simBarMs : INTERVALS[this.settings.interval];
+    return this.accelerated() ? 60_000 : INTERVALS[this.settings.interval];
+  }
+
+  /** Simulator and replay run faster than real time on 1m bars. */
+  accelerated(): boolean {
+    return this.feedName !== 'Binance';
+  }
+
+  /** Market clock: wall time when live, the replayed/simulated bar time otherwise. */
+  marketNow(): number {
+    return this.accelerated() && this.clock ? this.clock : Date.now();
   }
 
   /** Label for the candle length the agents are reading. */
   barLabel(): string {
-    return this.feedName === 'Simulator' ? '1m (sim)' : this.settings.interval;
+    return this.feedName === 'Simulator' ? '1m (sim)' : this.feedName === 'Replay' ? '1m (replay)' : this.settings.interval;
   }
 
   price(symbol: string): number {
@@ -260,6 +277,7 @@ export class Engine {
     const s = this.symbols.get(symbol);
     if (!s || !this.running) return;
     s.forming = closed ? null : candle;
+    if (closed) this.clock = Math.max(this.clock, candle.t + 60_000);
 
     // HAWK watches every tick for stops/targets using the latest traded price.
     const pos = this.positions.find((p) => p.symbol === symbol);
@@ -300,9 +318,9 @@ export class Engine {
       recentTrades: this.trades,
       dayStartEquity: this.dayStartEquity,
       dayPnl: this.dayPnl,
-      now: Date.now(),
+      now: this.marketNow(),
       barMs: this.barMs(),
-      barMinutes: this.feedName === 'Simulator' ? 1 : INTERVALS[this.settings.interval] / 60_000,
+      barMinutes: this.barMs() / 60_000,
     }, this.settings.sentry);
     this.lastGate = { symbol: s.symbol, signal: cand.signal, verdict, at: Date.now() };
     const passed = verdict.checks.filter((c) => c.pass).length;
@@ -333,6 +351,7 @@ export class Engine {
     const entry = fill.price;
     const p: Position = {
       ...order.position,
+      openedAt: this.marketNow(),
       entry,
       stop: entry - order.position.dir * order.stopDist,
       take: entry + order.position.dir * order.takeDist,
@@ -371,7 +390,7 @@ export class Engine {
       pnl: pnl - entryFee, // report round-trip result; entry fee was already charged at open
       fees: fill.fee + entryFee,
       openedAt: p.openedAt,
-      closedAt: Date.now(),
+      closedAt: this.marketNow(),
       reason,
     };
     this.trades.unshift(trade);
@@ -465,7 +484,7 @@ export class Engine {
 
   save() {
     // The simulator is a sandbox with synthetic prices; its book is not worth resuming.
-    if (this.settings.feed === 'sim') return;
+    if (this.settings.feed !== 'binance') return;
     store(this.storeKey(), {
       balance: this.balance,
       startBalance: this.startBalance,
@@ -480,7 +499,7 @@ export class Engine {
   }
 
   private restore() {
-    if (this.settings.feed === 'sim') return;
+    if (this.settings.feed !== 'binance') return;
     const d = load<Partial<Engine>>(this.storeKey());
     if (!d || typeof d.balance !== 'number') return;
     Object.assign(this, {
@@ -504,7 +523,7 @@ export class Engine {
 
   /** Resume with last session's champions in the gene pool (they must re-pass the gate). */
   private seedChampions() {
-    if (this.settings.feed === 'sim') return;
+    if (this.settings.feed !== 'binance') return;
     const champs = load<Record<string, Scored>>(`swarmdesk:champions:${this.settings.feed}`);
     if (!champs) return;
     for (const [sym, c] of Object.entries(champs)) {

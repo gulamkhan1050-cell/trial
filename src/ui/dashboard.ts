@@ -95,7 +95,7 @@ export class Dashboard {
     const hh = String(Math.floor(up / 3600)).padStart(2, '0');
     const mm = String(Math.floor((up % 3600) / 60)).padStart(2, '0');
     const ss = String(up % 60).padStart(2, '0');
-    const feed = e.feedStatus === 'live' ? 'LIVE DATA' : e.feedStatus === 'sim' ? 'SIMULATOR' : e.feedStatus.toUpperCase();
+    const feed = e.feedStatus === 'live' ? 'LIVE DATA' : e.feedStatus === 'sim' ? 'SIMULATOR' : e.feedStatus === 'replay' ? 'REPLAY · REAL DATA' : e.feedStatus.toUpperCase();
     this.root.querySelector('#status')!.innerHTML = `
       <span class="pill ${e.feedStatus}">${feed}</span>
       <span class="pill">${e.barLabel().toUpperCase()} CANDLES</span>
@@ -333,17 +333,21 @@ export class Dashboard {
       <section class="card">
         <h3>Presets <span class="dim">paper only</span></h3>
         <div class="presets">
-          <button class="ghost" data-preset="fast">⚡ Fast — 15 markets, looser gate</button>
-          <button class="ghost" data-preset="standard">Standard — 1m candles, default gate</button>
+          <button class="ghost" data-preset="replay">⏩ Replay real market — fast</button>
+          <button class="ghost" data-preset="fast">⚡ Live — 15 markets, looser gate</button>
+          <button class="ghost" data-preset="standard">Live standard — 6 markets, default gate</button>
         </div>
-        <p class="dim small">Fast watches 15 liquid coins on 1-minute candles with a looser gate, so setups come several times more often.
+        <p class="dim small">Replay fast-forwards the last ~2 days of real 1m prices (1 bar every 1.5s) — the same thing the "session replay" dashboards show.
+        It is real price history, so results mean more than the simulator, but it is still a backtest: live trading can't run faster than the market.</p>
+        <p class="dim small">Live fast watches 15 liquid coins on 1-minute candles with a looser gate, so setups come several times more often.
         Faster candles don't help: a 1-second move is far smaller than exchange fees, so no strategy survives FORGE there.</p>
       </section>
       <section class="card form">
         <h3>Market data</h3>
         <label>Feed
           <select data-set="feed">
-            <option value="binance" ${s.feed === 'binance' ? 'selected' : ''}>Binance live prices (paper fills)</option>
+            <option value="replay" ${s.feed === 'replay' ? 'selected' : ''}>Replay — last ~2 days of real Binance prices, fast-forwarded</option>
+            <option value="binance" ${s.feed === 'binance' ? 'selected' : ''}>Binance live prices (real time, paper fills)</option>
             <option value="sim" ${s.feed === 'sim' ? 'selected' : ''}>Simulator (turbo, offline)</option>
           </select></label>
         <label>Live candle timeframe
@@ -423,7 +427,7 @@ export class Dashboard {
     const num = Number(el.value);
     switch (key) {
       case 'feed':
-        this.engine.updateSettings({ feed: el.value as 'binance' | 'sim' });
+        this.engine.updateSettings({ feed: el.value as Settings['feed'] });
         break;
       case 'interval':
         this.engine.updateSettings({ interval: el.value as Settings['interval'] });
@@ -495,12 +499,14 @@ export class Dashboard {
 const DEFAULT_POP = 40;
 
 const PRESETS: Record<string, Partial<Settings>> = {
+  replay: { feed: 'replay', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
   fast: {
+    feed: 'binance',
     interval: '1m',
     symbols: [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'],
     sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 5, maxOpen: 5 },
   },
-  standard: { interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
+  standard: { feed: 'binance', interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
 };
 
 /** Fraction → percent for a form field, without float noise like 55.00000000000001. */
