@@ -40,6 +40,11 @@ export interface ArenaOptions {
   contestants: Contestant[];
   onProgress?: (p: ArenaProgress) => void;
   signal?: { cancelled: boolean };
+  /**
+   * 'fast' (default): grid contestants share one FORGE per market, re-tuned every ~3h of replay.
+   * 'thorough': every contestant runs its own FORGE, re-tuned every ~1h (the original Arena; ~4× slower).
+   */
+  forgeMode?: 'fast' | 'thorough';
 }
 
 export const WARMUP_BARS = 1200;
@@ -123,9 +128,11 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   const history: Record<string, Candle[]> = {};
   for (const s of symbols) history[s] = data[s].slice(0, WARMUP_BARS);
 
-  // Fixed seed: the same prices and settings give the same result every run.
-  const engines = opt.contestants.map((c) => {
-    const e = new Engine({ ...opt.base, ...c.patch, feed: 'sim', symbols: symbols }, 20260101);
+  // Fixed seeds: the same prices and settings give the same result every run. In thorough mode each
+  // contestant gets its own seed, so their FORGEs search independently (as the original Arena did).
+  const thorough = opt.forgeMode === 'thorough';
+  const engines = opt.contestants.map((c, j) => {
+    const e = new Engine({ ...opt.base, ...c.patch, feed: 'sim', symbols: symbols }, 20260101 + (thorough ? j * 7919 : 0));
     e.manualForge = true;
     return e;
   });
@@ -138,7 +145,7 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   const leaders = new Map<string, Engine>();
   const followerOf = new Map<Engine, Engine>();
   for (const e of engines) {
-    if (!e.gridMode()) continue;
+    if (thorough || !e.gridMode()) continue;
     const lead = leaders.get(feeKey(e));
     if (lead) followerOf.set(e, lead);
     else leaders.set(feeKey(e), e);
@@ -163,9 +170,9 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   }
 
   const curves: { t: number; v: number }[][] = engines.map(() => []);
-  // Each market is re-judged about every 3 hours of replay: often enough to follow regime changes,
-  // cheap enough that 30 coins × several contestants replay a week in minutes.
-  const forgeEvery = Math.max(1, Math.round(180 / symbols.length));
+  // Each market is re-judged about every 3 hours of replay in fast mode (cheap enough for 30 coins ×
+  // several contestants), or every hour in thorough mode.
+  const forgeEvery = Math.max(1, Math.round((thorough ? 60 : 180) / symbols.length));
   for (let i = WARMUP_BARS; i < len && !opt.signal?.cancelled; i++) {
     for (const e of engines) {
       for (const s of symbols) {
@@ -190,7 +197,7 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
 
   const results = engines.map((e, j) => summarize(opt.contestants[j].name, e, curves[j]));
   opt.onProgress?.({ stage: 'done', pct: 1, text: 'done' });
-  return { results, note, source };
+  return { results, note: note + (thorough ? ' · thorough FORGE' : ' · fast FORGE'), source };
 }
 
 function summarize(name: string, e: Engine, equity: { t: number; v: number }[]): ArenaResult {

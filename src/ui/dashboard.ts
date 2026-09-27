@@ -62,9 +62,10 @@ export class Dashboard {
     source: 'real' | 'sim';
     days: number;
     markets: number;
+    thorough: boolean;
     leverage: number;
     variants: boolean;
-  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3 };
+  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: false };
 
   constructor(
     private root: HTMLElement,
@@ -340,6 +341,8 @@ export class Dashboard {
             <select data-arena="markets">${opt(6, a.markets, '6 majors')}${opt(15, a.markets, '15 coins')}${opt(30, a.markets, '30 coins (slower)')}</select></label>
           <label>Contestants
             <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 4 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
+          <label>FORGE mode
+            <select data-arena="thorough">${opt('0', a.thorough ? '1' : '0', 'Fast — shared, re-tune every 3h')}${opt('1', a.thorough ? '1' : '0', 'Thorough — separate, re-tune hourly (~4× slower)')}</select></label>
           <label>Grid leverage (Normal vs Micro)
             <select data-arena="leverage">${opt(1, a.leverage, '1×')}${opt(2, a.leverage, '2×')}${opt(3, a.leverage, '3×')}</select></label>
         </div>
@@ -522,6 +525,7 @@ export class Dashboard {
         source: a.source,
         base: { ...base, grid: { ...base.grid, leverage: a.leverage } },
         contestants: a.variants ? gridVariants(base) : ARENA_CONTESTANTS,
+        forgeMode: a.thorough ? 'thorough' : 'fast',
         signal: a.signal,
         onProgress: (p) => {
           a.progress = p;
@@ -807,6 +811,7 @@ export class Dashboard {
       if (ak === 'source') a.source = el.value as 'real' | 'sim';
       if (ak === 'days') a.days = Number(el.value);
       if (ak === 'markets') a.markets = Number(el.value);
+      if (ak === 'thorough') a.thorough = el.value === '1';
       if (ak === 'leverage') a.leverage = Number(el.value);
       if (ak === 'variants') a.variants = el.value === '1';
       return;

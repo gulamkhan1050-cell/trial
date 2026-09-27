@@ -116,3 +116,17 @@ describe('Arena robustness', () => {
     expect(a.results.map((r) => r.final)).toEqual(b.results.map((r) => r.final));
   }, 120_000);
 });
+
+describe('FORGE mode', () => {
+  it('thorough mode runs a separate FORGE per grid contestant and says so', async () => {
+    const { gridVariants } = await import('../src/core/arena');
+    const [, g1, g3] = gridVariants(DEFAULT_SETTINGS);
+    const fast = await runArena({ symbols: ['BTCUSDT', 'ETHUSDT'], days: 1, source: 'sim', base: DEFAULT_SETTINGS, contestants: [g1, g3] });
+    const thorough = await runArena({ symbols: ['BTCUSDT', 'ETHUSDT'], days: 1, source: 'sim', base: DEFAULT_SETTINGS, contestants: [g1, g3], forgeMode: 'thorough' });
+    expect(fast.note).toMatch(/fast FORGE/);
+    expect(thorough.note).toMatch(/thorough FORGE/);
+    // Shared FORGE: 1× and 3× trade the same ladders, so their trade counts track each other closely.
+    // Separate FORGEs evolve independently, so the results differ from fast mode.
+    expect(thorough.results.map((r) => r.final)).not.toEqual(fast.results.map((r) => r.final));
+  }, 180_000);
+});
