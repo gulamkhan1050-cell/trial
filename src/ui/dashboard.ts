@@ -339,7 +339,7 @@ export class Dashboard {
           <label>Markets
             <select data-arena="wide">${opt('0', a.wide ? '1' : '0', '6 majors')}${opt('1', a.wide ? '1' : '0', '15 coins')}</select></label>
           <label>Contestants
-            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 3 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
+            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 4 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
           <label>Grid leverage (Normal vs Micro)
             <select data-arena="leverage">${opt(1, a.leverage, '1×')}${opt(2, a.leverage, '2×')}${opt(3, a.leverage, '3×')}</select></label>
         </div>
@@ -713,6 +713,13 @@ export class Dashboard {
           <input type="number" step="0.01" min="0" max="1" data-set="grid.maker" value="${pctInput(s.grid.maker)}"></label>
         <label>Grid leverage (× the bank spread across all grids — multiplies losses too)
           <input type="number" step="0.5" min="1" max="5" data-set="grid.leverage" value="${s.grid.leverage}"></label>
+        <label>Crash guard (flatten all grids when most markets dump together)
+          <select data-set="grid.crashGuard">
+            <option value="0" ${s.grid.crashGuard ? '' : 'selected'}>Off — best on a real week so far</option>
+            <option value="1" ${s.grid.crashGuard ? 'selected' : ''}>On</option>
+          </select></label>
+        <label>Crash guard trigger: drop % over 30 bars on ⅔ of markets
+          <input type="number" step="0.5" min="0.5" max="10" data-set="grid.crashDrop" value="${pctInput(s.grid.crashDrop)}"></label>
         <label>Taker fee % (stop-outs)
           <input type="number" step="0.01" min="0" max="1" data-set="grid.taker" value="${pctInput(s.grid.taker)}"></label>
       </section>
@@ -811,6 +818,12 @@ export class Dashboard {
         break;
       case 'strategy':
         this.engine.updateSettings({ strategy: el.value as Settings['strategy'] });
+        break;
+      case 'grid.crashGuard':
+        this.engine.updateSettings({ grid: { ...s.grid, crashGuard: el.value === '1' } });
+        break;
+      case 'grid.crashDrop':
+        if (num > 0) this.engine.updateSettings({ grid: { ...s.grid, crashDrop: num / 100 } });
         break;
       case 'grid.leverage':
         if (num >= 1 && num <= 5) this.engine.updateSettings({ grid: { ...s.grid, leverage: num } });

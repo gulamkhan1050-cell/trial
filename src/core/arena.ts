@@ -198,11 +198,13 @@ export const ARENA_CONTESTANTS: Contestant[] = [
 /** Grid variants on the same data, plus NORMAL as the baseline. */
 export function gridVariants(base: Settings): Contestant[] {
   const g = base.grid;
+  const loose = { crashDrop: 0.025, crashBars: 30, crashShare: 0.67 };
   return [
     { name: 'NORMAL · directional', patch: { strategy: 'agents' } },
-    { name: 'MICRO 1× · crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 1, crashGuard: true } } },
+    { name: 'MICRO 1× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 1, crashGuard: false } } },
     { name: 'MICRO 3× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false } } },
-    { name: 'MICRO 3× · crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true } } },
+    { name: 'MICRO 3× · loose guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose } } },
+    { name: 'MICRO 5× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: false } } },
   ];
 }
 

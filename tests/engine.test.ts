@@ -6,7 +6,7 @@ describe('Engine on the simulator', () => {
 
   it('boots, evolves champions and keeps the book consistent', async () => {
     vi.useFakeTimers();
-    const engine = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT'] });
+    const engine = new Engine({ ...DEFAULT_SETTINGS, strategy: 'agents', feed: 'sim', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT'] });
     await engine.start();
     await vi.advanceTimersByTimeAsync(120_000); // ~300 simulated bars
     engine.stop();
@@ -21,4 +21,18 @@ describe('Engine on the simulator', () => {
     expect(engine.balance).toBeCloseTo(engine.startBalance + closed - openFees, 6);
     expect(engine.positions.length).toBeLessThanOrEqual(DEFAULT_SETTINGS.sentry.maxOpen);
   }, 60_000);
+});
+
+describe('saved settings', () => {
+  it('moves settings saved before the Arena results to the grid defaults, keeping the user fees', async () => {
+    const { loadSettings } = await import('../src/core/engine');
+    const store: Record<string, string> = {
+      'swarmdesk:settings': JSON.stringify({ strategy: 'agents', grid: { maker: 0.0001, taker: 0.0004, leverage: 1, crashGuard: true } }),
+    };
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => (store[k] = v) });
+    const s = loadSettings();
+    vi.unstubAllGlobals();
+    expect(s.strategy).toBe('grid');
+    expect(s.grid).toMatchObject({ leverage: 3, crashGuard: false, maker: 0.0001, taker: 0.0004 });
+  });
 });

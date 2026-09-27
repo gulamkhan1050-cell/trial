@@ -30,7 +30,7 @@ describe('Replay feed', () => {
   it('pages history, replays it fast and trades on the replayed clock', async () => {
     vi.useFakeTimers();
     const { calls, bySymbol } = await fakeBinance(2500);
-    const engine = new Engine({ ...DEFAULT_SETTINGS, feed: 'replay', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT'] });
+    const engine = new Engine({ ...DEFAULT_SETTINGS, strategy: 'agents', feed: 'replay', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT'] });
     await engine.start();
     expect(engine.feedName).toBe('Replay');
     expect(engine.feedStatus).toBe('replay');
@@ -99,7 +99,7 @@ describe('switching presets mid-session', () => {
 
   it('does not carry positions from one simulated market into the next', async () => {
     vi.useFakeTimers();
-    const engine = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] });
+    const engine = new Engine({ ...DEFAULT_SETTINGS, strategy: 'agents', feed: 'sim', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] });
     await engine.start();
     // Run until the directional agents hold at least one position.
     for (let i = 0; i < 300 && engine.positions.length === 0; i++) await vi.advanceTimersByTimeAsync(1000);

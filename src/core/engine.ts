@@ -37,7 +37,15 @@ export interface Settings {
   symbols: string[];
   strategy: 'agents' | 'grid'; // directional agents, or the GRID micro-trading engine
   // A grid runs on every market in `symbols`. crashGuard flattens all grids when most markets dump together.
-  grid: { maker: number; taker: number; leverage: number; crashGuard: boolean };
+  grid: {
+    maker: number;
+    taker: number;
+    leverage: number;
+    crashGuard: boolean;
+    crashDrop: number; // a market counts as dumping if it fell this fraction…
+    crashBars: number; // …over this many bars
+    crashShare: number; // guard fires when at least this share of markets are dumping
+  };
   sentry: SentryConfig;
   hawk: HawkConfig;
 }
@@ -50,8 +58,10 @@ export const DEFAULT_SETTINGS: Settings = {
   symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'],
   sentry: DEFAULT_SENTRY,
   hawk: DEFAULT_HAWK,
-  strategy: 'agents',
-  grid: { ...DEFAULT_GRID_FEES, leverage: 1, crashGuard: true },
+  strategy: 'grid',
+  // Defaults follow the Arena on a real week (6 majors): 3x unguarded grid was the only profitable setup,
+  // and a 1%/15-bar guard fired on ordinary volatility, so the guard is off and looser when enabled.
+  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: false, crashDrop: 0.025, crashBars: 30, crashShare: 0.67 },
 };
 
 export interface SymbolState {
@@ -80,9 +90,7 @@ const HISTORY_KEEP = 1600;
 const EVOLVE_WINDOW = 600;
 /** Grids need longer samples: round trips are small and noisy, so judge on up to a day of 1m bars. */
 const GRID_WINDOW = 1440;
-/** Crash guard: fraction drop over a window that counts a market as dumping, and the pause after. */
-const CRASH_DROP = 0.01;
-const CRASH_BARS = 15;
+/** Bars the crash guard pauses all grids for after it fires. */
 const CRASH_PAUSE = 60;
 /** Bars a running grid keeps its genome after FORGE retires it, before standing down. */
 const GRID_GRACE = 60;
@@ -688,15 +696,16 @@ export class Engine {
   private crashGuard() {
     if (this.stressWait > 0) this.stressWait--;
     if (!this.settings.grid.crashGuard || this.stressWait > 0) return;
+    const { crashDrop, crashBars, crashShare } = this.settings.grid;
     let down = 0;
     let n = 0;
     for (const sym of this.grids.keys()) {
       const c = this.symbols.get(sym)?.candles;
-      if (!c || c.length <= CRASH_BARS) continue;
+      if (!c || c.length <= crashBars) continue;
       n++;
-      if (c[c.length - 1].c / c[c.length - 1 - CRASH_BARS].c - 1 <= -CRASH_DROP) down++;
+      if (c[c.length - 1].c / c[c.length - 1 - crashBars].c - 1 <= -crashDrop) down++;
     }
-    if (n < 2 || down / n < 0.5) return;
+    if (n < 2 || down / n < crashShare) return;
     this.stressWait = CRASH_PAUSE;
     let saved = 0;
     for (const g of this.grids.values()) {
@@ -709,7 +718,7 @@ export class Engine {
     this.say(
       'SENTRY',
       'veto',
-      `✕ crash guard: ${down}/${n} markets down >${(CRASH_DROP * 100).toFixed(1)}% in ${CRASH_BARS} bars — ${saved} grids flattened, all paused ${CRASH_PAUSE} bars`,
+      `✕ crash guard: ${down}/${n} markets down >${(crashDrop * 100).toFixed(1)}% in ${crashBars} bars — ${saved} grids flattened, all paused ${CRASH_PAUSE} bars`,
     );
   }
 
@@ -872,6 +881,12 @@ function load<T>(key: string): T | null {
 
 export function loadSettings(): Settings {
   const s = load<Partial<Settings>>('swarmdesk:settings');
+  // Settings saved before the real-week Arena results (no crashDrop yet) move to the new
+  // defaults — grid at 3x, guard off — keeping only the user's own fees.
+  if (s?.grid && (s.grid as Partial<Settings['grid']>).crashDrop === undefined) {
+    s.strategy = DEFAULT_SETTINGS.strategy;
+    s.grid = { ...DEFAULT_SETTINGS.grid, maker: s.grid.maker ?? DEFAULT_SETTINGS.grid.maker, taker: s.grid.taker ?? DEFAULT_SETTINGS.grid.taker };
+  }
   return {
     ...DEFAULT_SETTINGS,
     ...s,
