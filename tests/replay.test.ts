@@ -93,3 +93,23 @@ describe('restarting while a replay is still downloading', () => {
     expect(bySymbol.BTCUSDT.length).toBeGreaterThan(0);
   }, 60_000);
 });
+
+describe('switching presets mid-session', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('does not carry positions from one simulated market into the next', async () => {
+    vi.useFakeTimers();
+    const engine = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'] });
+    await engine.start();
+    // Run until the directional agents hold at least one position.
+    for (let i = 0; i < 300 && engine.positions.length === 0; i++) await vi.advanceTimersByTimeAsync(1000);
+    expect(engine.positions.length).toBeGreaterThan(0);
+    engine.updateSettings({ strategy: 'grid' });
+    await vi.advanceTimersByTimeAsync(5_000);
+    // A fresh book: the old positions were not closed against the new market's synthetic prices.
+    expect(engine.positions).toHaveLength(0);
+    expect(engine.trades.filter((t) => !t.reason.startsWith('grid'))).toHaveLength(0);
+    expect(engine.dayPnl).toBeGreaterThan(-engine.startBalance * 0.05);
+    engine.stop();
+  }, 60_000);
+});

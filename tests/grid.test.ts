@@ -83,13 +83,13 @@ describe('Engine in GRID mode', () => {
     await vi.advanceTimersByTimeAsync(400 * 900);
     engine.stop();
     vi.useRealTimers();
-    expect(engine.gridForge.generation).toBeGreaterThan(5);
+    expect(engine.grids.get('BTCUSDT')!.forge.generation).toBeGreaterThan(5);
     // Never trade a grid FORGE crowned with a losing out-of-sample result.
     for (const l of engine.log.filter((x) => x.text.includes('grid champion:'))) expect(l.text).not.toMatch(/OOS -/);
     // Balance = start + closed round trips − buy fees of inventory still held.
     const closed = engine.trades.reduce((s, t) => s + t.pnl, 0);
-    const inv = engine.gridBot?.inventory() ?? { qty: 0, cost: 0 };
-    expect(engine.balance).toBeCloseTo(engine.startBalance + closed - inv.cost * engine.settings.grid.maker, 6);
+    const heldCost = [...engine.grids.values()].reduce((s, g) => s + (g.bot?.inventory().cost ?? 0), 0);
+    expect(engine.balance).toBeCloseTo(engine.startBalance + closed - heldCost * engine.settings.grid.maker, 6);
   }, 60_000);
 });
 
@@ -114,6 +114,6 @@ describe('GRID stability on calm, BTC-like replay', () => {
     const count = (re: RegExp) => e.log.filter((l) => re.test(l.text)).length;
     expect(count(/grid armed/)).toBeGreaterThanOrEqual(1);
     expect(count(/stood down/)).toBeLessThanOrEqual(1);
-    expect(e.gridRoundTrips).toBeGreaterThan(10);
+    expect(e.gridTotals().roundTrips).toBeGreaterThan(10);
   }, 120_000);
 });

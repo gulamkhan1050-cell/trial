@@ -5,6 +5,22 @@ import { PaperBroker } from './broker';
 import { DEFAULT_EVOLVER, type EvolverState, newEvolver, type Scored, step } from './evolver';
 import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, ReplayFeed, SimFeed } from './market';
 import { DEFAULT_GRID_FEES, type GridFill, type GridForge, GridBot, type GridState, gridSafe, newGridForge, stepGridForge } from './grid';
+
+export interface GridSlot {
+  symbol: string;
+  forge: GridForge;
+  bot: GridBot | null;
+  roundTrips: number;
+  last: number; // last price seen, for walking fills between ticks
+  wait: number; // bars of cooldown left after a stop
+  orphan: number; // bars since FORGE last had a champion
+  trails: number; // ladder moves up since the last heartbeat
+  why: string; // SENTRY's reason for not arming, if any
+}
+
+function newSlot(symbol: string, rand: () => number): GridSlot {
+  return { symbol, forge: newGridForge(rand), bot: null, roundTrips: 0, last: 0, wait: 0, orphan: 0, trails: 0, why: '' };
+}
 import { mulberry32, uid } from './rng';
 import type { AgentId, Broker, Candle, LogEntry, Position, Signal, Trade } from './types';
 
@@ -20,7 +36,7 @@ export interface Settings {
   startBalance: number;
   symbols: string[];
   strategy: 'agents' | 'grid'; // directional agents, or the GRID micro-trading engine
-  grid: { symbol: string; maker: number; taker: number };
+  grid: { maker: number; taker: number }; // a grid runs on every market in `symbols`
   sentry: SentryConfig;
   hawk: HawkConfig;
 }
@@ -34,7 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sentry: DEFAULT_SENTRY,
   hawk: DEFAULT_HAWK,
   strategy: 'agents',
-  grid: { symbol: 'BTCUSDT', ...DEFAULT_GRID_FEES },
+  grid: { ...DEFAULT_GRID_FEES },
 };
 
 export interface SymbolState {
@@ -86,14 +102,9 @@ export class Engine {
   dayStartEquity = 0;
   dayPnl = 0;
   vetoes = 0;
-  gridForge: GridForge;
-  gridBot: GridBot | null = null;
-  gridRoundTrips = 0;
-  private gridLast = 0;
-  private gridWait = 0;
-  private gridOrphanBars = 0;
+  /** One grid per market: its own FORGE population, ladder and SENTRY state. */
+  grids = new Map<string, GridSlot>();
   private gridBars = 0;
-  private gridTrails = 0;
 
   private feed: MarketFeed | null = null;
   private clock = 0;
@@ -113,7 +124,6 @@ export class Engine {
       HAWK: idle('no position'),
       FORGE: idle('idle'),
     };
-    this.gridForge = newGridForge(this.rand);
     this.resetBook();
     this.restore();
   }
@@ -131,15 +141,18 @@ export class Engine {
 
   async start() {
     if (this.running) return;
+    // Simulated and replayed prices don't continue from one run to the next, so positions
+    // carried over would be marked against a different market. Every such run starts a fresh book.
+    if (this.settings.feed !== 'binance') this.resetBook();
     this.running = true;
     this.startedAt = Date.now();
     this.clock = 0;
-    this.gridLast = 0;
-    this.gridWait = 0;
-    this.gridOrphanBars = 0;
-    this.gridForge = newGridForge(this.rand);
-    if (this.gridMode() && !this.settings.symbols.includes(this.settings.grid.symbol))
-      this.settings = { ...this.settings, symbols: [this.settings.grid.symbol, ...this.settings.symbols] };
+    // Keep restored ladders (live mode) but give every market a fresh FORGE population.
+    const kept = this.grids;
+    this.grids = new Map();
+    for (const sym of this.settings.symbols) {
+      this.grids.set(sym, { ...newSlot(sym, this.rand), bot: kept.get(sym)?.bot ?? null, roundTrips: kept.get(sym)?.roundTrips ?? 0 });
+    }
     this.symbols.clear();
     for (const s of this.settings.symbols) {
       this.symbols.set(s, {
@@ -212,6 +225,21 @@ export class Engine {
   }
 
   updateSettings(patch: Partial<Settings>) {
+    // Leaving a live book's strategy or markets: flatten at today's real prices first, so no
+    // position or grid inventory is left behind unmanaged. (Sim/replay books restart fresh anyway.)
+    const reshapes = (patch.strategy !== undefined && patch.strategy !== this.settings.strategy) || patch.symbols !== undefined;
+    if (reshapes && this.settings.feed === 'binance' && this.running && this.hasExposure()) {
+      void this.closeAll().then(() => this.applySettings(patch));
+      return;
+    }
+    this.applySettings(patch);
+  }
+
+  hasExposure(): boolean {
+    return this.positions.length > 0 || [...this.grids.values()].some((g) => (g.bot?.inventory().qty ?? 0) > 0);
+  }
+
+  private applySettings(patch: Partial<Settings>) {
     const feedChanged = patch.feed !== undefined && patch.feed !== this.settings.feed;
     const intervalChanged = patch.interval !== undefined && patch.interval !== this.settings.interval;
     this.settings = { ...this.settings, ...patch };
@@ -238,8 +266,7 @@ export class Engine {
     this.dayKey = '';
     this.vetoes = 0;
     this.lastGate = null;
-    this.gridBot = null;
-    this.gridRoundTrips = 0;
+    this.grids = new Map();
     this.rollDay();
   }
 
@@ -271,12 +298,30 @@ export class Engine {
   }
 
   openPnl(): number {
-    const grid = this.gridBot ? this.gridBot.unrealized(this.price(this.settings.grid.symbol) || this.gridBot.center) : 0;
+    let grid = 0;
+    for (const g of this.grids.values()) if (g.bot) grid += g.bot.unrealized(this.price(g.symbol) || g.bot.center);
     return grid + this.positions.reduce((sum, p) => sum + unrealized(p, this.price(p.symbol) || p.entry), 0);
   }
 
   gridMode(): boolean {
     return this.settings.strategy === 'grid';
+  }
+
+  gridTotals() {
+    let roundTrips = 0;
+    let armed = 0;
+    let holding = 0;
+    let inventory = 0;
+    for (const g of this.grids.values()) {
+      roundTrips += g.roundTrips;
+      if (g.bot?.armed) armed++;
+      const inv = g.bot?.inventory();
+      if (inv && inv.qty > 0) {
+        holding++;
+        inventory += inv.cost;
+      }
+    }
+    return { roundTrips, armed, holding, inventory, markets: this.grids.size };
   }
 
   totalEquity(): number {
@@ -326,15 +371,15 @@ export class Engine {
       if (exit) await this.close(pos, exit.price, exit.reason);
     }
 
-    const gridSym = this.gridMode() && symbol === this.settings.grid.symbol;
-    if (gridSym) this.gridTick(candle.c);
+    const slot = this.gridMode() ? this.grids.get(symbol) : undefined;
+    if (slot) this.gridTick(slot, candle.c);
 
     if (closed) {
       const last = s.candles[s.candles.length - 1];
       if (last && last.t === candle.t) s.candles[s.candles.length - 1] = candle;
       else s.candles.push(candle);
       if (s.candles.length > HISTORY_KEEP) s.candles.splice(0, s.candles.length - HISTORY_KEEP);
-      if (gridSym) this.gridBarClose(s);
+      if (slot) this.gridBarClose(slot, s);
       else if (!this.gridMode()) await this.onBarClose(s);
       if (symbol === this.settings.symbols[0]) this.markEquity(2000);
     }
@@ -449,12 +494,11 @@ export class Engine {
   /** Manual flatten from the UI. */
   async closeAll() {
     for (const p of [...this.positions]) await this.close(p, this.price(p.symbol) || p.entry, 'manual close');
-    if (this.gridBot?.armed) {
-      const px = this.price(this.settings.grid.symbol);
-      const inv = this.gridBot.inventory();
-      if (inv.qty > 0) this.onGridFill(this.gridBot.liquidate(px), 'manual close');
-      this.gridBot.disarm();
-      this.gridWait = 30;
+    for (const g of this.grids.values()) {
+      if (!g.bot?.armed) continue;
+      if (g.bot.inventory().qty > 0) this.onGridFill(g, g.bot.liquidate(this.price(g.symbol)), 'manual close');
+      g.bot.disarm();
+      g.wait = 30;
     }
     this.emit();
   }
@@ -507,28 +551,28 @@ export class Engine {
 
   // ------------------------------------------------------------ GRID (micro-trading)
 
-  private gridTick(price: number) {
-    const bot = this.gridBot;
-    if (bot?.armed && this.gridLast) {
+  private gridTick(g: GridSlot, price: number) {
+    const bot = g.bot;
+    if (bot?.armed && g.last) {
       const center = bot.center;
-      for (const f of bot.move(this.gridLast, price)) this.onGridFill(f);
-      if (bot.center !== center && bot.armed) this.gridTrails++;
+      for (const f of bot.move(g.last, price)) this.onGridFill(g, f);
+      if (bot.center !== center && bot.armed) g.trails++;
     }
-    this.gridLast = price;
+    g.last = price;
   }
 
-  private onGridFill(f: GridFill, reason?: string) {
-    const sym = this.settings.grid.symbol;
+  private onGridFill(g: GridSlot, f: GridFill, reason?: string) {
+    const sym = g.symbol;
     this.balance += f.cash;
     this.dayPnl += f.cash;
     if (f.kind === 'buy') {
       this.agents.HAWK = { busy: true, text: `grid buy ${short(sym)} @ ${fmtPrice(f.price)}`, at: Date.now() };
-      this.say('HAWK', 'entry', `GRID BUY ${sym} ${f.qty.toPrecision(3)} @ ${fmtPrice(f.price)}`);
+      this.say('HAWK', 'entry', `GRID BUY ${sym} ${fmtQty(f.qty)} @ ${fmtPrice(f.price)}`);
       return;
     }
     const rt = f.roundTrip!;
     const now = this.marketNow();
-    this.gridRoundTrips++;
+    g.roundTrips++;
     this.trades.unshift({
       id: uid('t'),
       symbol: sym,
@@ -544,30 +588,30 @@ export class Engine {
     });
     this.trades.length = Math.min(this.trades.length, 300);
     if (f.kind === 'stop') {
-      this.gridWait = 30;
-      this.agents.SENTRY = { busy: true, text: `grid stopped — cooling down`, at: Date.now() };
+      g.wait = 30;
+      this.agents.SENTRY = { busy: true, text: `${short(sym)} grid stopped — cooling down`, at: Date.now() };
       this.say('SENTRY', 'veto', `✕ ${sym} broke below the grid — inventory liquidated, 30-bar cooldown`, rt.pnl);
     } else {
       this.agents.HAWK = { busy: true, text: `grid sell ${short(sym)} ${rt.pnl >= 0 ? '+' : ''}${rt.pnl.toFixed(2)}`, at: Date.now() };
       this.say('HAWK', 'exit', `GRID SELL ${sym} @ ${fmtPrice(rt.sell)} (bought ${fmtPrice(rt.buy)})`, rt.pnl);
     }
-    this.markEquity();
+    this.markEquity(1000);
   }
 
-  private gridBarClose(s: SymbolState) {
+  private gridBarClose(g: GridSlot, s: SymbolState) {
     this.rollDay();
-    s.stage = this.gridBot?.armed ? 'hold' : 'idle';
-    this.agents.SCOUT = { busy: true, text: `reading ${short(s.symbol)} range`, at: Date.now() };
-    if (this.gridWait > 0) this.gridWait--;
-    const champ = this.gridForge.champion;
-    const bot = this.gridBot;
+    if (s.symbol === this.settings.symbols[0]) this.gridHeartbeat();
+    if (g.wait > 0) g.wait--;
+    const champ = g.forge.champion;
+    const bot = g.bot;
     const price = s.candles[s.candles.length - 1].c;
     const flat = !bot || bot.inventory().qty === 0;
+    this.agents.SCOUT = { busy: true, text: `reading ${short(s.symbol)} range`, at: Date.now() };
 
     // FORGE retired the strategy: keep working the ladder for a grace period (a retirement is
     // often noise at the pass/fail edge), then stand down once nothing is held.
-    this.gridOrphanBars = champ ? 0 : this.gridOrphanBars + 1;
-    if (bot?.armed && !champ && flat && this.gridOrphanBars >= GRID_GRACE) {
+    g.orphan = champ ? 0 : g.orphan + 1;
+    if (bot?.armed && !champ && flat && g.orphan >= GRID_GRACE) {
       bot.disarm();
       this.say('SENTRY', 'veto', `✕ ${s.symbol} grid stood down — no grid has passed out-of-sample for ${GRID_GRACE} bars`);
     }
@@ -575,52 +619,55 @@ export class Engine {
     if (bot?.armed && champ && champ.genome.id !== bot.genome.id && flat) {
       bot.genome = champ.genome;
       bot.arm(price, bot.capital);
-      this.say('HAWK', 'info', `grid re-laid with new genome · step ${(champ.genome.spacing * 100).toFixed(2)}% × ${champ.genome.levels}`);
     }
     if (bot?.armed) {
-      // Heartbeat: while a ladder waits for price to come down to it, say so every 20 bars.
-      if (++this.gridBars % 20 === 0) {
-        const buys = bot.orders.filter((o) => o.side === 'buy');
-        const next = buys.length ? Math.max(...buys.map((o) => o.price)) : 0;
-        const held = bot.orders.length - buys.length;
-        this.say(
-          'HAWK',
-          'info',
-          `GRID watching ${s.symbol} @ ${fmtPrice(price)} · ${held}/${bot.genome.levels} filled` +
-            (next ? ` · next buy ${fmtPrice(next)} (${(((next - price) / price) * 100).toFixed(2)}%)` : '') +
-            (this.gridTrails ? ` · trailed up ${this.gridTrails}× as price rose` : ''),
-        );
-        this.gridTrails = 0;
-      }
-      const inv = bot.inventory();
-      this.agents.HAWK = { busy: true, text: `${bot.orders.filter((o) => o.side === 'sell').length}/${bot.genome.levels} filled`, at: Date.now() };
-      if (inv.qty > 0) s.stage = 'hold';
+      s.stage = flat ? 'idle' : 'hold';
       return;
     }
 
-    // Not armed: SENTRY decides whether the market is safe to lay a grid.
-    s.stage = 'gate';
+    // Not armed: SENTRY decides whether this market is safe to lay a grid.
     let why = '';
     if (!champ) why = 'no grid survived FORGE yet';
-    else if (this.gridWait > 0) why = `cooldown ${this.gridWait} bars after stop`;
+    else if (g.wait > 0) why = `cooldown ${g.wait} bars after stop`;
     else if (this.dayPnl <= -this.settings.sentry.dailyLossLimit * this.dayStartEquity) why = 'daily loss limit hit';
     else if (!gridSafe(s.candles, s.candles.length - 1, champ.genome)) why = 'selling off too hard for a grid';
+    g.why = why;
     if (why) {
-      s.stage = 'veto';
-      this.agents.SENTRY = { busy: true, text: why, at: Date.now() };
+      s.stage = champ ? 'veto' : 'idle';
       return;
     }
-    const g = champ!.genome;
-    this.gridBot = bot ?? new GridBot(g, this.gridFees());
-    this.gridBot.genome = g;
-    this.gridBot.fees = this.gridFees();
-    this.gridBot.arm(price, this.totalEquity());
+    const genome = champ!.genome;
+    // Each market gets an equal slice of the bank.
+    const capital = this.totalEquity() / Math.max(1, this.grids.size);
+    g.bot = bot ?? new GridBot(genome, this.gridFees());
+    g.bot.genome = genome;
+    g.bot.fees = this.gridFees();
+    g.bot.arm(price, capital);
     s.stage = 'execute';
-    this.agents.SENTRY = { busy: true, text: 'range ok — grid armed', at: Date.now() };
+    this.agents.SENTRY = { busy: true, text: `${short(s.symbol)} range ok — grid armed`, at: Date.now() };
     this.say(
       'SENTRY',
       'pass',
-      `✓ ${s.symbol} range ok — grid armed: ${g.levels} buys every ${(g.spacing * 100).toFixed(2)}% under ${fmtPrice(price)}, stop ${(g.stop * 100).toFixed(1)}% below`,
+      `✓ ${s.symbol} grid armed: ${genome.levels} buys every ${(genome.spacing * 100).toFixed(2)}% under ${fmtPrice(price)} · $${capital.toFixed(0)}`,
+    );
+  }
+
+  /** One line every 20 bars so a quiet desk still shows it's alive. */
+  private gridHeartbeat() {
+    if (++this.gridBars % 20 !== 0) return;
+    const t = this.gridTotals();
+    let trails = 0;
+    for (const g of this.grids.values()) {
+      trails += g.trails;
+      g.trails = 0;
+    }
+    const benched = [...this.grids.values()].filter((g) => !g.bot?.armed).length;
+    this.say(
+      'HAWK',
+      'info',
+      `GRID ${t.armed}/${t.markets} ladders armed · ${t.holding} holding $${t.inventory.toFixed(0)} · ${t.roundTrips} round trips` +
+        (benched ? ` · ${benched} waiting` : '') +
+        (trails ? ` · trailed up ${trails}× as prices rose` : ''),
     );
   }
 
@@ -629,27 +676,28 @@ export class Engine {
   }
 
   private gridForgeTick() {
-    const s = this.symbols.get(this.settings.grid.symbol);
-    if (!s || s.candles.length < 300) return this.scheduleForge(500);
-    const before = this.gridForge.champion?.genome.id;
+    const ready = [...this.grids.values()].filter((g) => (this.symbols.get(g.symbol)?.candles.length ?? 0) >= 300);
+    if (!ready.length) return this.scheduleForge(500);
+    const g = ready[this.forgeCursor++ % ready.length];
+    const candles = this.symbols.get(g.symbol)!.candles;
+    const before = g.forge.champion?.genome.id;
     const t0 = performance.now();
-    this.agents.FORGE = { busy: true, text: `grid gen ${this.gridForge.generation + 1}`, at: Date.now() };
-    this.gridForge = stepGridForge(this.gridForge, s.candles.slice(-GRID_WINDOW), this.gridFees(), this.rand);
-    const f = this.gridForge;
+    this.agents.FORGE = { busy: true, text: `grid gen ${g.forge.generation + 1} · ${short(g.symbol)}`, at: Date.now() };
+    g.forge = stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand);
+    const f = g.forge;
     const c = f.champion;
     if (c && c.genome.id !== before) {
       this.say(
         'FORGE',
         'evolve',
-        `${s.symbol} grid champion: step ${(c.genome.spacing * 100).toFixed(2)}% × ${c.genome.levels} · OOS ${(c.test.profit * 100).toFixed(2)}% · ${c.test.roundTrips} round trips`,
+        `${g.symbol} grid champion: step ${(c.genome.spacing * 100).toFixed(2)}% × ${c.genome.levels} · OOS ${(c.test.profit * 100).toFixed(2)}% · ${c.test.roundTrips} round trips`,
       );
     } else if (!c && before) {
-      this.say('FORGE', 'warn', `${s.symbol} grid champion failed re-validation — retired`);
-    } else if (!c && f.generation % 10 === 0) {
-      this.say('FORGE', 'warn', `${s.symbol} grid gen ${f.generation}: no grid beats fees out-of-sample yet — waiting`);
+      this.say('FORGE', 'warn', `${g.symbol} grid champion failed re-validation — retired`);
     }
-    // After warm-up, re-judge every ~10s: often enough to adapt, slow enough not to churn on noise.
-    this.scheduleForge(f.generation < 12 ? Math.max(30, performance.now() - t0) : 10_000);
+    // Warm every market up quickly; afterwards re-judge each one about every 10s.
+    const warming = ready.some((x) => x.forge.generation < 12);
+    this.scheduleForge(warming ? Math.max(20, performance.now() - t0) : Math.max(300, 10_000 / ready.length));
     this.emit();
   }
 
@@ -694,14 +742,13 @@ export class Engine {
       dayKey: this.dayKey,
       dayStartEquity: this.dayStartEquity,
       dayPnl: this.dayPnl,
-      grid: this.gridBot?.snapshot() ?? null,
-      gridRoundTrips: this.gridRoundTrips,
+      grids: Object.fromEntries([...this.grids.values()].filter((g) => g.bot).map((g) => [g.symbol, { bot: g.bot!.snapshot(), roundTrips: g.roundTrips }])),
     });
   }
 
   private restore() {
     if (this.settings.feed !== 'binance') return;
-    const d = load<Partial<Engine> & { grid?: GridState | null }>(this.storeKey());
+    const d = load<Partial<Omit<Engine, 'grids'>> & { grids?: Record<string, { bot: GridState; roundTrips: number }> }>(this.storeKey());
     if (!d || typeof d.balance !== 'number') return;
     Object.assign(this, {
       balance: d.balance,
@@ -713,9 +760,10 @@ export class Engine {
       dayKey: d.dayKey ?? '',
       dayStartEquity: d.dayStartEquity ?? this.balance,
       dayPnl: d.dayPnl ?? 0,
-      gridRoundTrips: d.gridRoundTrips ?? 0,
-      gridBot: d.grid ? GridBot.restore(d.grid, this.gridFees()) : null,
     });
+    this.grids = new Map(
+      Object.entries(d.grids ?? {}).map(([sym, x]) => [sym, { ...newSlot(sym, this.rand), bot: GridBot.restore(x.bot, this.gridFees()), roundTrips: x.roundTrips }]),
+    );
   }
 
   private saveChampions() {

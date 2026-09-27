@@ -205,19 +205,31 @@ export class Dashboard {
 
   private gridView(): string {
     const e = this.engine;
-    const sym = e.settings.grid.symbol;
-    const bot = e.gridBot;
-    const f = e.gridForge;
-    const c = f.champion;
-    const px = e.price(sym);
-    const gridTrades = e.trades.filter((t) => t.symbol === sym && t.reason.startsWith('grid'));
-    const gridPnl = gridTrades.reduce((s, t) => s + t.pnl, 0);
-    const inv = bot?.inventory() ?? { qty: 0, cost: 0 };
-    const status = !e.gridMode() ? 'OFF' : bot?.armed ? 'ARMED' : 'WAITING';
-
     if (!e.gridMode())
       return `<section class="card"><h3>Grid engine <span class="dim">off</span></h3>
         <p class="empty">The GRID micro-trader is off. Go to Setup and tap <b>▦ Grid micro-trading</b> to run it.</p></section>`;
+
+    if (!e.grids.has(this.symbol)) this.symbol = e.settings.symbols[0];
+    const sym = this.symbol;
+    const g = e.grids.get(sym);
+    const bot = g?.bot;
+    const f = g?.forge;
+    const c = f?.champion;
+    const px = e.price(sym);
+    const gridTrades = e.trades.filter((t) => t.reason.startsWith('grid'));
+    const gridPnl = gridTrades.reduce((sum, t) => sum + t.pnl, 0);
+    const tot = e.gridTotals();
+    const open = [...e.grids.values()].reduce((sum, x) => sum + (x.bot ? x.bot.unrealized(e.price(x.symbol) || x.bot.center) : 0), 0);
+
+    const chips = [...e.grids.values()]
+      .map((x) => {
+        const pnl = e.trades.filter((t) => t.symbol === x.symbol && t.reason.startsWith('grid')).reduce((sum, t) => sum + t.pnl, 0);
+        const held = x.bot?.inventory().qty ? 'holding' : x.bot?.armed ? 'armed' : x.forge.champion ? 'waiting' : 'searching';
+        return `<button class="sym slim ${x.symbol === sym ? 'on' : ''}" data-sym="${x.symbol}"><b>${short(x.symbol)}</b>
+          <small class="${held === 'holding' || held === 'armed' ? 'up' : ''}">${held} · ${x.roundTrips}</small>
+          <small class="${cls(pnl)}">${signed(pnl)}</small></button>`;
+      })
+      .join('');
 
     const rows = bot?.armed
       ? [...bot.orders]
@@ -232,26 +244,27 @@ export class Dashboard {
       : '';
     return `
       <section class="kpis">
-        ${kpi('Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${gridTrades.length} round trips`)}
-        ${kpi('Status', status, bot?.armed ? `${short(sym)} · ${bot.genome.levels} levels` : esc(e.agents.SENTRY.text))}
-        ${kpi('Inventory', usd(inv.cost), `open ${signed(bot ? bot.unrealized(px || bot.center) : 0)}`)}
-        ${kpi('Step', c ? `${(c.genome.spacing * 100).toFixed(2)}%` : '—', `fees ${(e.settings.grid.maker * 200).toFixed(2)}% per round trip`)}
+        ${kpi('Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${tot.roundTrips} round trips · all markets`)}
+        ${kpi('Ladders armed', `${tot.armed}/${tot.markets}`, `${tot.holding} holding coins`)}
+        ${kpi('Inventory', usd(tot.inventory), `open ${signed(open)}`)}
+        ${kpi('Fees', `${(e.settings.grid.maker * 200).toFixed(2)}%`, 'maker, per round trip')}
       </section>
+      <div class="syms">${chips}</div>
       <section class="card">
-        <h3>Grid engine · ${short(sym)} <span class="dim">buys ▬ green · take-profits ▬ red</span></h3>
+        <h3>Grid engine · ${short(sym)} <span class="dim">buys ▬ green · take-profits ▬ red · stop ▬ amber</span></h3>
         <canvas id="c-grid" class="chart tall"></canvas>
       </section>
       <div class="split">
         <section class="card">
-          <h3>Order grid <span class="dim">${bot?.armed ? `stop ${fmtPrice(bot.stopPrice())}` : 'not armed'}</span></h3>
+          <h3>Order grid · ${short(sym)} <span class="dim">${bot?.armed ? `stop ${fmtPrice(bot.stopPrice())}` : 'not armed'}</span></h3>
           ${
             rows
               ? `<table class="grid"><thead><tr><th>LVL</th><th>PRICE</th><th>SIZE</th><th>DIST</th><th>STATUS</th></tr></thead><tbody>${rows}</tbody></table>`
-              : `<p class="empty">${esc(e.agents.SENTRY.text || 'Waiting for FORGE to find a grid that beats fees.')}</p>`
+              : `<p class="empty">${esc(g?.why || 'Waiting for FORGE to find a grid that beats fees here.')}</p>`
           }
         </section>
         <section class="card">
-          <h3>Grid genome <span class="dim">FORGE gen ${f.generation} · kill ${f.tested ? pct(f.killed / f.tested) : '0%'}</span></h3>
+          <h3>Grid genome · ${short(sym)} <span class="dim">FORGE gen ${f?.generation ?? 0} · kill ${f?.tested ? pct(f.killed / f.tested) : '0%'}</span></h3>
           ${
             c
               ? `<div class="stats">
@@ -262,14 +275,14 @@ export class Dashboard {
                   ${stat('OOS trips', String(c.test.roundTrips))}
                   ${stat('Max DD', pct(c.test.maxDrawdown, 2))}
                 </div>`
-              : `<p class="empty">No grid has beaten fees on unseen data yet.</p>`
+              : `<p class="empty">No grid has beaten fees on unseen data for ${short(sym)} yet.</p>`
           }
           <canvas id="c-gridfit" class="chart short"></canvas>
         </section>
       </div>
       <section class="card">
-        <h3>Execution log</h3>
-        ${this.logList(12)}
+        <h3>Execution log <span class="dim">all markets</span></h3>
+        ${this.logList(14)}
       </section>`;
   }
 
@@ -412,7 +425,7 @@ export class Dashboard {
           <button class="ghost" data-preset="fast">⚡ Live — 15 markets, looser gate</button>
           <button class="ghost" data-preset="standard">Live standard — 6 markets, default gate</button>
         </div>
-        <p class="dim small">Grid micro-trading lays a ladder of limit buys under BTC; each fill gets a take-profit one step higher,
+        <p class="dim small">Grid micro-trading runs a ladder of limit buys on each of 15 coins, with an equal slice of the bank each; every fill gets a take-profit one step higher,
         so every small bounce books a small profit at maker fees. It earns in ranges and is stopped out in hard sell-offs.</p>
         <p class="dim small">Replay fast-forwards the last ~2 days of real 1m prices (1 bar every 1.5s) — the same thing the "session replay" dashboards show.
         It is real price history, so results mean more than the simulator, but it is still a backtest: live trading can't run faster than the market.</p>
@@ -443,10 +456,8 @@ export class Dashboard {
         <label>Engine
           <select data-set="strategy">
             <option value="agents" ${s.strategy === 'agents' ? 'selected' : ''}>Directional agents (SCOUT → SENTRY → HAWK)</option>
-            <option value="grid" ${s.strategy === 'grid' ? 'selected' : ''}>Grid micro-trading (GRID on one market)</option>
+            <option value="grid" ${s.strategy === 'grid' ? 'selected' : ''}>Grid micro-trading (a grid on every market)</option>
           </select></label>
-        <label>Grid market
-          <input type="text" data-set="grid.symbol" value="${s.grid.symbol}"></label>
         <label>Maker fee % (grid fills)
           <input type="number" step="0.01" min="0" max="1" data-set="grid.maker" value="${pctInput(s.grid.maker)}"></label>
         <label>Taker fee % (stop-outs)
@@ -523,11 +534,6 @@ export class Dashboard {
       case 'strategy':
         this.engine.updateSettings({ strategy: el.value as Settings['strategy'] });
         break;
-      case 'grid.symbol': {
-        const v = el.value.trim().toUpperCase();
-        if (/^[A-Z0-9]{2,20}$/.test(v)) this.engine.updateSettings({ grid: { ...s.grid, symbol: v } });
-        break;
-      }
       case 'grid.maker':
       case 'grid.taker':
         if (num >= 0) this.engine.updateSettings({ grid: { ...s.grid, [key.split('.')[1]]: num / 100 } });
@@ -575,16 +581,17 @@ export class Dashboard {
     }
 
     const gC = q('c-grid');
-    const gs = e.symbols.get(e.settings.grid.symbol);
+    const gs = e.symbols.get(this.symbol);
+    const gbot = e.grids.get(this.symbol)?.bot;
     if (gC && gs) {
       const candles = [...gs.candles.slice(-119), ...(gs.forming ? [gs.forming] : [])];
-      const levels = (e.gridBot?.armed ? e.gridBot.orders : []).map((o) => ({ price: o.price, color: o.side === 'buy' ? '--up' : '--down' }));
-      if (e.gridBot?.armed) levels.push({ price: e.gridBot.stopPrice(), color: '--warn' });
+      const levels = (gbot?.armed ? gbot.orders : []).map((o) => ({ price: o.price, color: o.side === 'buy' ? '--up' : '--down' }));
+      if (gbot?.armed) levels.push({ price: gbot.stopPrice(), color: '--warn' });
       candleChart(gC, candles, undefined, e.trades.filter((t) => t.symbol === gs.symbol), fmtPrice, levels);
     }
     const gfC = q('c-gridfit');
     if (gfC) {
-      const h = e.gridForge.history.slice(-80);
+      const h = e.grids.get(this.symbol)?.forge.history.slice(-80) ?? [];
       lineChart(gfC, [{ values: h.map((x) => Math.max(-0.05, x.best)), color: '--up', fill: true }], (v) => `${(v * 100).toFixed(2)}%`, 0);
     }
 
@@ -615,14 +622,16 @@ export class Dashboard {
 
 const DEFAULT_POP = 40;
 
+const WIDE_MARKETS = [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'];
+
 const PRESETS: Record<string, Partial<Settings>> = {
-  grid: { feed: 'replay', strategy: 'grid', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
+  grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, sentry: { ...DEFAULT_SENTRY } },
   replay: { feed: 'replay', strategy: 'agents', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
   fast: {
     feed: 'binance',
     strategy: 'agents',
     interval: '1m',
-    symbols: [...DEFAULT_SETTINGS.symbols, 'ADAUSDT', 'AVAXUSDT', 'LINKUSDT', 'TRXUSDT', 'SUIUSDT', 'LTCUSDT', 'DOTUSDT', 'NEARUSDT', 'BCHUSDT'],
+    symbols: WIDE_MARKETS,
     sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 5, maxOpen: 5 },
   },
   standard: { feed: 'binance', strategy: 'agents', interval: '1m', symbols: DEFAULT_SETTINGS.symbols, sentry: { ...DEFAULT_SENTRY } },
