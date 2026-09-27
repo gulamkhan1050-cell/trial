@@ -65,7 +65,7 @@ export class Dashboard {
     thorough: boolean;
     leverage: number;
     variants: boolean;
-  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: false };
+  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: true };
 
   constructor(
     private root: HTMLElement,
@@ -342,7 +342,7 @@ export class Dashboard {
           <label>Contestants
             <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 4 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
           <label>FORGE mode
-            <select data-arena="thorough">${opt('0', a.thorough ? '1' : '0', 'Fast — shared, re-tune every 3h')}${opt('1', a.thorough ? '1' : '0', 'Thorough — separate, re-tune hourly (~4× slower)')}</select></label>
+            <select data-arena="thorough">${opt('1', a.thorough ? '1' : '0', 'Thorough — re-tune hourly, like live (slower)')}${opt('0', a.thorough ? '1' : '0', 'Fast — shared, re-tune every 3h')}</select></label>
           <label>Grid leverage (Normal vs Micro)
             <select data-arena="leverage">${opt(1, a.leverage, '1×')}${opt(2, a.leverage, '2×')}${opt(3, a.leverage, '3×')}</select></label>
         </div>
@@ -676,12 +676,13 @@ export class Dashboard {
         <h3>Presets <span class="dim">paper only</span></h3>
         <div class="presets">
           <button class="ghost primary" data-preset="live">★ Live grid — 15 coins, 3×, real-time paper</button>
+          <button class="ghost" data-preset="live5">★ Live grid aggressive — 15 coins, 5×</button>
           <button class="ghost" data-preset="grid">▦ Grid — replay last ~30h fast</button>
           <button class="ghost" data-preset="replay">⏩ Directional — replay</button>
           <button class="ghost" data-preset="fast">Directional live — 15 markets</button>
           <button class="ghost" data-preset="standard">Directional live — 6 majors</button>
         </div>
-        <p class="dim small">★ is the best risk/return from the real 7-day Arena runs so far (15 coins: +13.7% at 3×, worst drop ~9%). Directional agents lost 30–35% in every real run.</p>
+        <p class="dim small">★ Real 7-day Arena runs, 15 coins: 3× made +6% to +14% (worst drops ~9–11%); 5× made +10% to +23% (worst drops ~14–20%). Directional agents lost 29–37% in every run.</p>
         <p class="dim small">Grid micro-trading runs a ladder of limit buys on each of 15 coins, with an equal slice of the bank each; every fill gets a take-profit one step higher,
         so every small bounce books a small profit at maker fees. It earns in ranges and is stopped out in hard sell-offs.</p>
         <p class="dim small">Replay fast-forwards the last ~2 days of real 1m prices (1 bar every 1.5s) — the same thing the "session replay" dashboards show.
@@ -928,6 +929,8 @@ const ARENA_COLORS = ['--scout', '--hawk', '--forge', '--warn', '--down'];
 const PRESETS: Record<string, Partial<Settings>> = {
   // The setup that won the real-week Arena, on live real-time prices (paper fills).
   live: { feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: DEFAULT_SETTINGS.grid, sentry: { ...DEFAULT_SENTRY } },
+  // 5x made money in all four real 15-coin weeks (+9.8% to +23.4%) with deeper drops (14-20%).
+  live5: { feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: { ...DEFAULT_SETTINGS.grid, leverage: 5 }, sentry: { ...DEFAULT_SENTRY } },
   grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: DEFAULT_SETTINGS.grid, sentry: { ...DEFAULT_SENTRY } },
   replay: { feed: 'replay', strategy: 'agents', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
   fast: {
