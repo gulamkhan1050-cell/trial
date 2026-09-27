@@ -17,7 +17,7 @@ SENTRY won't lay a ladder into a sell-off and liquidates below the stop. It earn
 Grid profit only exists if the step clears round-trip fees — set your exchange's maker/taker fees in Setup.
 
 Screens: **Desk** (balance, PnL, pipeline, SENTRY checks, positions, log) · **Markets** (live candles with entry/stop/target) ·
-**Forge** (generation, kill rate, fitness curve, selection funnel, Kelly curve, genome) · **Log** · **Setup**.
+**Grid** (order ladder, grid levels, genome) · **Forge** (generation, kill rate, fitness curve, selection funnel, Kelly curve, genome) · **Log** · **Setup**.
 
 ## Modes
 
