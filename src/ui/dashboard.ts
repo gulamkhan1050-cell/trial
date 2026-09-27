@@ -102,7 +102,8 @@ export class Dashboard {
       <span class="pill">${e.barLabel().toUpperCase()} CANDLES</span>
       <span class="pill paper">PAPER</span>
       <span class="mono dim">${hh}:${mm}:${ss}</span>
-      <button class="run ${e.running ? 'on' : ''}" data-act="toggle">${e.running ? '■ STOP' : '▶ START'}</button>`;
+      <button class="run ${e.running ? 'on' : ''}" data-act="toggle">${e.running ? '■ STOP' : '▶ START'}</button>
+      ${e.feedStatus === 'replay' || e.feedStatus === 'connecting' ? `<span class="feed-detail mono dim">${esc(e.feedDetail)}</span>` : ''}`;
   }
 
   // ------------------------------------------------------------ DESK

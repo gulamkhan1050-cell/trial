@@ -92,9 +92,12 @@ export class Engine {
   private gridLast = 0;
   private gridWait = 0;
   private gridOrphanBars = 0;
+  private gridBars = 0;
+  private gridTrails = 0;
 
   private feed: MarketFeed | null = null;
   private clock = 0;
+  private session = 0;
   private broker: Broker = new PaperBroker();
   private rand = mulberry32(Date.now() % 1e9);
   private forgeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -151,10 +154,15 @@ export class Engine {
     this.seedChampions();
     this.say('SCOUT', 'info', `session start · ${this.settings.symbols.length} markets · ${FEED_LABEL[this.settings.feed]}`);
 
+    // Events from a feed that belongs to an earlier session (e.g. a download that finished
+    // after the user restarted) are dropped, so two feeds can never drive the book at once.
+    const session = ++this.session;
+    const live = () => session === this.session;
     const handlers = {
-      onHistory: (s: string, c: Candle[]) => this.onHistory(s, c),
-      onCandle: (s: string, c: Candle, closed: boolean) => void this.onCandle(s, c, closed),
+      onHistory: (s: string, c: Candle[]) => live() && this.onHistory(s, c),
+      onCandle: (s: string, c: Candle, closed: boolean) => void (live() && this.onCandle(s, c, closed)),
       onStatus: (st: FeedStatus, d: string) => {
+        if (!live()) return;
         this.feedStatus = st;
         this.feedDetail = d;
         this.emit();
@@ -177,12 +185,14 @@ export class Engine {
       this.feedName = this.feed.name;
       await this.feed.start(this.settings.symbols, handlers);
     }
+    if (!live()) return;
     this.scheduleForge(50);
     this.emit();
   }
 
   stop() {
     this.running = false;
+    this.session++;
     this.feed?.stop();
     this.feed = null;
     if (this.forgeTimer) clearTimeout(this.forgeTimer);
@@ -500,7 +510,9 @@ export class Engine {
   private gridTick(price: number) {
     const bot = this.gridBot;
     if (bot?.armed && this.gridLast) {
+      const center = bot.center;
       for (const f of bot.move(this.gridLast, price)) this.onGridFill(f);
+      if (bot.center !== center && bot.armed) this.gridTrails++;
     }
     this.gridLast = price;
   }
@@ -566,6 +578,20 @@ export class Engine {
       this.say('HAWK', 'info', `grid re-laid with new genome · step ${(champ.genome.spacing * 100).toFixed(2)}% × ${champ.genome.levels}`);
     }
     if (bot?.armed) {
+      // Heartbeat: while a ladder waits for price to come down to it, say so every 20 bars.
+      if (++this.gridBars % 20 === 0) {
+        const buys = bot.orders.filter((o) => o.side === 'buy');
+        const next = buys.length ? Math.max(...buys.map((o) => o.price)) : 0;
+        const held = bot.orders.length - buys.length;
+        this.say(
+          'HAWK',
+          'info',
+          `GRID watching ${s.symbol} @ ${fmtPrice(price)} · ${held}/${bot.genome.levels} filled` +
+            (next ? ` · next buy ${fmtPrice(next)} (${(((next - price) / price) * 100).toFixed(2)}%)` : '') +
+            (this.gridTrails ? ` · trailed up ${this.gridTrails}× as price rose` : ''),
+        );
+        this.gridTrails = 0;
+      }
       const inv = bot.inventory();
       this.agents.HAWK = { busy: true, text: `${bot.orders.filter((o) => o.side === 'sell').length}/${bot.genome.levels} filled`, at: Date.now() };
       if (inv.qty > 0) s.stage = 'hold';

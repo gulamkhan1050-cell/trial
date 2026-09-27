@@ -61,7 +61,7 @@ export class BinanceFeed implements MarketFeed {
         h.onHistory(s, rows.slice(0, -1).map(parseKline));
       }),
     );
-    this.connect(symbols, h);
+    if (!this.stopped) this.connect(symbols, h);
   }
 
   private connect(symbols: string[], h: FeedHandlers) {
@@ -104,6 +104,7 @@ export class BinanceFeed implements MarketFeed {
 export class ReplayFeed implements MarketFeed {
   readonly name = 'Replay';
   private timer: ReturnType<typeof setInterval> | null = null;
+  private stopped = false;
 
   constructor(
     private barMs = 1500,
@@ -115,6 +116,7 @@ export class ReplayFeed implements MarketFeed {
   async start(symbols: string[], h: FeedHandlers): Promise<void> {
     h.onStatus('connecting', 'downloading history');
     const data = await Promise.all(symbols.map((s) => this.download(s)));
+    if (this.stopped) return; // stopped while downloading
     const len = Math.min(...data.map((d) => d.length));
     if (len < this.warmup + 50) throw new Error('not enough history for replay');
     // Align every symbol on the same most-recent `len` bars.
@@ -141,7 +143,7 @@ export class ReplayFeed implements MarketFeed {
       if (tick === 4) {
         tick = 0;
         bar++;
-        if (bar % 10 === 0) show();
+        show();
       }
     }, this.barMs / 4);
   }
@@ -163,6 +165,7 @@ export class ReplayFeed implements MarketFeed {
   }
 
   stop() {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }

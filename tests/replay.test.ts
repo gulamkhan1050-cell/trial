@@ -60,3 +60,36 @@ describe('Replay feed', () => {
     engine.stop();
   });
 });
+
+describe('restarting while a replay is still downloading', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('never lets the abandoned download drive the book', async () => {
+    vi.useFakeTimers();
+    const { bySymbol } = await fakeBinance(2600);
+    const inner = globalThis.fetch;
+    // Slow network: each page takes 2s, so the restart lands mid-download.
+    vi.stubGlobal('fetch', async (url: string) => {
+      await new Promise((r) => setTimeout(r, 2000));
+      return inner(url);
+    });
+    const engine = new Engine({ ...DEFAULT_SETTINGS, feed: 'replay', simBarMs: 400, symbols: ['BTCUSDT'] });
+    void engine.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    engine.updateSettings({ strategy: 'grid' });
+    await vi.advanceTimersByTimeAsync(20_000); // downloads finish for both sessions
+    const before = engine.symbols.get('BTCUSDT')!.candles.length;
+    await vi.advanceTimersByTimeAsync(400 * 50);
+    const after = engine.symbols.get('BTCUSDT')!.candles.length;
+    engine.stop();
+    // One feed → ~50 new bars. Two feeds would interleave and add duplicates or double speed.
+    expect(after - before).toBeGreaterThanOrEqual(48);
+    expect(after - before).toBeLessThanOrEqual(51);
+    const ts = engine.symbols.get('BTCUSDT')!.candles.map((k) => k.t);
+    expect(ts.every((t, i) => i === 0 || t > ts[i - 1])).toBe(true);
+    expect(bySymbol.BTCUSDT.length).toBeGreaterThan(0);
+  }, 60_000);
+});

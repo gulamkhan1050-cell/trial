@@ -135,3 +135,4 @@ table.grid td { padding: 5px 4px 5px 0; border-top: 1px solid var(--line); white
 table.grid tr.sell td:first-child { color: var(--down); }
 table.grid tr.buy td:first-child { color: var(--up); }
 .tabs button { padding-left: 2px; padding-right: 2px; }
+.feed-detail { flex-basis: 100%; font-size: 10px; text-align: right; }
