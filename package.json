@@ -11,6 +11,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "bot": "sh bot/run-bot.sh",
+    "bot:win": "vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn && node dist-bot/bot.js",
     "bot:kill": "vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn && node dist-bot/bot.js --kill",
     "cap:sync": "npm run build && cap sync android",
     "apk": "npm run cap:sync && cd android && ./gradlew assembleDebug"
