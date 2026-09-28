@@ -1,5 +1,6 @@
 import type { GridGenome } from '../core/grid';
 import type { LogEntry } from '../core/types';
+import { BinanceError } from './binance';
 import { BOT_TAG, type ExchangeClient, type ExOrder, roundDown, roundTo, type SymbolRules } from './types';
 
 /**
@@ -46,6 +47,7 @@ interface Level {
   buyPrice?: number;
   orderId?: number;
   fails: number;
+  lastFail?: number;
 }
 
 export interface LiveCoin {
@@ -295,7 +297,10 @@ export class LiveGrid {
     const px = this.px[c.symbol];
     if (!px) return;
     for (const l of c.levels) {
-      if (l.orderId !== undefined || l.fails >= 5) continue;
+      if (l.orderId !== undefined) continue;
+      // After repeated real rejections, back off for 5 minutes — but never give up on a level for good
+      // (a take-profit that is never re-placed would leave coins bought and unsold).
+      if (l.fails >= 5 && this.now() - (l.lastFail ?? 0) < 5 * 60_000) continue;
       let price = l.price;
       if (l.side === 'buy' && price >= px * (1 - 0.0002)) continue; // market is at/below the level: wait
       if (l.side === 'sell') price = Math.max(price, roundTo(px * 1.0003, c.rules.tickSize)); // TP already passed: sell just above market
@@ -305,7 +310,11 @@ export class LiveGrid {
         l.orderId = o.orderId;
         l.fails = 0;
       } catch (e) {
+        // -5022: post-only would have crossed because the price moved in the meantime. Normal in a
+        // fast market — just try again next tick, don't count it as a failure or log it.
+        if (e instanceof BinanceError && e.code === -5022) continue;
         l.fails++;
+        l.lastFail = this.now();
         this.host.log('warn', `LIVE ${c.symbol} ${l.side} L${l.lvl} rejected: ${(e as Error).message}`);
       }
     }

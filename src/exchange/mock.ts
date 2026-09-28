@@ -20,6 +20,8 @@ export class MockExchange implements ExchangeClient {
   leverage: Record<string, number> = {};
   calls: string[] = [];
   hedgeMode = false;
+  /** Real Binance answers a crossing post-only order with error -5022 instead of an EXPIRED order. */
+  postOnlyThrows = false;
   private next = 1;
 
   constructor(
@@ -112,6 +114,8 @@ export class MockExchange implements ExchangeClient {
     const o: MockOrder = { orderId: this.next++, symbol, side, price, origQty: qty, executedQty: 0, avgPrice: 0, status: 'NEW', reduceOnly, clientOrderId: `${BOT_TAG}${this.next}` };
     const px = this.px[symbol];
     if (px !== undefined && (side === 'BUY' ? price >= px : price <= px)) o.status = 'EXPIRED'; // post-only would cross
+    if (o.status === 'EXPIRED' && this.postOnlyThrows)
+      throw new BinanceError(-5022, 'Due to the order could not be executed as maker, the Post Only order will be rejected.');
     if (reduceOnly && o.status === 'NEW' && !this.canReduce(o)) throw new BinanceError(-2022, 'ReduceOnly Order is rejected.');
     this.orders.set(o.orderId, o);
     return { ...o };

@@ -244,3 +244,56 @@ describe('LiveGrid housekeeping', () => {
     await expect(b.live.start()).rejects.toThrow(/Position side/);
   });
 });
+
+describe('post-only rejections (-5022)', () => {
+  it('keeps retrying a take-profit rejected as would-cross, without counting failures or logging', async () => {
+    const { ex, live, logs } = setup();
+    ex.postOnlyThrows = true;
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    // Make every sell attempt cross: the mock rejects with -5022 like Binance does.
+    const orig = ex.limitMaker.bind(ex);
+    let sellAttempts = 0;
+    ex.limitMaker = async (s, side, q, p, ro) => {
+      if (side === 'SELL') {
+        sellAttempts++;
+        const { BinanceError } = await import('../src/exchange/binance');
+        throw new BinanceError(-5022, 'Post Only order will be rejected');
+      }
+      return orig(s, side, q, p, ro);
+    };
+    ex.setPrice('DOGEUSDT', 0.0985); // L1 buy fills
+    await live.tick();
+    const l1 = live.coins.get('DOGEUSDT')!.levels[0];
+    expect(l1.side).toBe('sell');
+    for (let i = 0; i < 8; i++) await live.tick();
+    expect(sellAttempts).toBeGreaterThanOrEqual(8); // never gave up on the take-profit
+    expect(l1.fails).toBe(0);
+    expect(logs.some((l) => l.includes('rejected'))).toBe(false);
+    // Once the market allows it, the take-profit goes on the book.
+    ex.limitMaker = orig;
+    ex.postOnlyThrows = false;
+    await live.tick();
+    expect((await ex.openOrders()).some((o) => o.side === 'SELL')).toBe(true);
+  });
+
+  it('backs off after repeated real rejections but retries later', async () => {
+    const { ex, live, advance } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    const orig = ex.limitMaker.bind(ex);
+    let attempts = 0;
+    ex.limitMaker = async () => {
+      attempts++;
+      throw new Error('Binance -2019: Margin is insufficient.');
+    };
+    for (let i = 0; i < 10; i++) await live.tick();
+    const perLevel = attempts / live.coins.get('DOGEUSDT')!.levels.length;
+    expect(perLevel).toBe(5); // stopped hammering after 5 failures per level
+    ex.limitMaker = orig;
+    advance(5 * 60_000 + 1);
+    await live.tick();
+    expect((await ex.openOrders()).length).toBe(5); // retried after the back-off
+  });
+});
