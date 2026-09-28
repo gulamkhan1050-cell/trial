@@ -110,12 +110,19 @@ async function config(): Promise<LiveSettings> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = async (q: string, def: string) => (await rl.question(`${q} [${def}]: `)).trim() || def;
   console.log('\nFirst run — Binance futures API key with ONLY "Enable Futures" (never withdrawals).\n');
-  const network = (await ask('Network: demo / mainnet', 'demo')) as Network;
+  let network = (await ask('Network — just press Enter for demo, or type mainnet', 'demo')).toLowerCase() as Network;
+  let pastedKey = '';
+  if (network.length > 20) {
+    // The API key pasted one question early: take it as the key, on demo.
+    pastedKey = network;
+    network = 'demo';
+    console.log('  (that looks like the API key — using it, network demo)');
+  }
   if (!['demo', 'mainnet', 'testnet'].includes(network)) fail('network must be demo or mainnet');
   const s: LiveSettings = {
     network,
-    apiKey: await ask('API key', ''),
-    apiSecret: await ask('API secret', ''),
+    apiKey: pastedKey || (await ask('Paste the API KEY', '')),
+    apiSecret: await ask('Paste the SECRET KEY', ''),
     maxCapital: +(await ask('Max capital USDT', '100')),
     leverage: +(await ask('Leverage', '3')),
     maxCoins: +(await ask('Max coins', '5')),
