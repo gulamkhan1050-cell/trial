@@ -54,6 +54,42 @@ describe('LiveController', () => {
     expect(await ex.openOrders()).toHaveLength(0);
   });
 
+  it('picks the running grid back up after a restart instead of selling it', async () => {
+    vi.useFakeTimers();
+    const mem = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+      removeItem: (k: string) => void mem.delete(k),
+    });
+    try {
+      const ex = new MockExchange(RULES, 100);
+      ex.setPrice('DOGEUSDT', 0.1);
+      const s = { ...DEFAULT_LIVE_SETTINGS, apiKey: 'abcdefgh123' };
+      const first = new LiveController(engineWithChampion(), () => ex);
+      await first.start(s);
+      await vi.advanceTimersByTimeAsync(3100);
+      ex.setPrice('DOGEUSDT', 0.0985);
+      await vi.advanceTimersByTimeAsync(3100); // bought L1
+      const held = ex.positions.DOGEUSDT.qty;
+      first.pause(); // app closed / phone restarted
+
+      const second = new LiveController(engineWithChampion(), () => ex);
+      await second.start(s);
+      expect(second.live!.resumed).toBe(1);
+      expect(ex.calls.some((c) => c.startsWith('CLOSE'))).toBe(false);
+      expect(ex.positions.DOGEUSDT.qty).toBe(held);
+      ex.setPrice('DOGEUSDT', 0.1);
+      await vi.advanceTimersByTimeAsync(3100);
+      expect(second.live!.roundTrips).toBe(1);
+
+      await second.kill();
+      expect(mem.size).toBe(0); // nothing left to resume after KILL
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('only offers coins SENTRY allows, best first', () => {
     const engine = engineWithChampion();
     engine.grids.get('DOGEUSDT')!.why = 'selling off too hard for a grid';

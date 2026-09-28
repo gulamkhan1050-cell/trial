@@ -1,5 +1,10 @@
 node_modules/
 dist/
+dist-bot/
+# Headless bot: API keys and state stay on the device
+bot.config.json
+bot-state.json
+bot-state.json.tmp
 *.log
 .DS_Store
 # Android build outputs

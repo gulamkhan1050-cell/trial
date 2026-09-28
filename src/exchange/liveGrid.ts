@@ -61,6 +61,20 @@ export interface LiveCoin {
   lastTrail: number;
 }
 
+/** Everything needed to pick a running grid back up after the app or phone restarts. */
+export interface LiveSnapshot {
+  v: 1;
+  savedAt: number;
+  startWallet: number;
+  roundTrips: number;
+  realized: number;
+  coins: LiveCoin[];
+  cooldown: [string, number][];
+}
+
+/** Retiring a flat coin waits this long after (re)start, so FORGE can re-judge its grids first. */
+const RETIRE_GRACE_MS = 10 * 60_000;
+
 export class LiveGrid {
   coins = new Map<string, LiveCoin>();
   running = false;
@@ -72,6 +86,10 @@ export class LiveGrid {
   roundTrips = 0;
   realized = 0; // booked from our own fills (the wallet is the final truth)
   lastError = '';
+  /** How many coins were picked back up from a saved snapshot at start. */
+  resumed = 0;
+  private startedAt = 0;
+  private reconcilePending = false;
   private busy = false;
   private cooldown = new Map<string, number>();
   private lastBalance = 0;
@@ -90,14 +108,20 @@ export class LiveGrid {
     private now: () => number = () => Date.now(),
   ) {}
 
-  async start() {
+  /**
+   * `resume` continues an earlier session: its coins, resting orders and positions are kept (not
+   * sold), and its stats carry on. Without it, anything the bot left behind is cleaned up.
+   */
+  async start(resume?: LiveSnapshot | null) {
     const b = await this.ex.balance();
     this.startWallet = b.wallet;
     this.wallet = b.wallet;
     this.available = b.available;
-    this.budget = Math.min(this.cfg.maxCapital, b.available);
+    // A resumed session already has margin tied up in its own orders and positions.
+    this.budget = Math.min(this.cfg.maxCapital, resume?.coins.length ? b.wallet : b.available);
     if (this.budget < 10) throw new Error(`only $${b.available.toFixed(2)} available in the futures wallet`);
     this.rules = await this.ex.rules(this.universe);
+    if (resume) this.restore(resume);
     await this.ex.ensureOneWay().catch(async (e) => {
       // Our own leftovers can block the switch: clean them first, then retry once.
       await this.cleanLeftovers();
@@ -109,7 +133,57 @@ export class LiveGrid {
     this.running = true;
     this.killed = false;
     this.lastBalance = this.now();
+    this.startedAt = this.now();
     this.host.log('info', `LIVE ${this.ex.name}: wallet $${b.wallet.toFixed(2)} · budget $${this.budget.toFixed(2)} · ${this.cfg.leverage}× · up to ${this.cfg.maxCoins} coins`);
+    if (this.resumed) this.host.log('info', `LIVE resumed ${this.resumed} coin(s) from the last session — their orders and positions were kept`);
+  }
+
+  snapshot(): LiveSnapshot {
+    return {
+      v: 1,
+      savedAt: this.now(),
+      startWallet: this.startWallet,
+      roundTrips: this.roundTrips,
+      realized: this.realized,
+      coins: [...this.coins.values()],
+      cooldown: [...this.cooldown],
+    };
+  }
+
+  private restore(s: LiveSnapshot) {
+    if (s.v !== 1) return;
+    this.startWallet = s.startWallet || this.startWallet;
+    this.roundTrips = s.roundTrips ?? 0;
+    this.realized = s.realized ?? 0;
+    this.cooldown = new Map(s.cooldown ?? []);
+    for (const c of s.coins ?? []) {
+      if (!this.rules[c.symbol] || !c.levels?.length) continue;
+      this.coins.set(c.symbol, { ...c, rules: this.rules[c.symbol], levels: c.levels.map((l) => ({ ...l })) });
+      this.setupDone.add(c.symbol);
+    }
+    this.resumed = this.coins.size;
+    this.reconcilePending = this.resumed > 0;
+  }
+
+  /**
+   * After a resume, check each coin against its real position: if the exchange-side stop fired
+   * (or someone closed it) while the app was off, the take-profits have nothing left to sell.
+   */
+  private async reconcile() {
+    for (const c of [...this.coins.values()]) {
+      const held = inventory(c);
+      if (held <= 0) continue;
+      let pos = await this.ex.position(c.symbol);
+      if (pos.qty < held * 0.5) {
+        // A take-profit may simply have filled since the sync: re-check the orders before judging.
+        await this.sync(c, new Set((await this.ex.openOrders()).map((o) => o.orderId)));
+        pos = await this.ex.position(c.symbol);
+      }
+      if (pos.qty < inventory(c) * 0.5) {
+        this.host.log('warn', `LIVE ${c.symbol}: position was closed while the app was off — re-arming it fresh`);
+        await this.flatten(c, 'closed while offline (flat)');
+      }
+    }
   }
 
   /**
@@ -162,6 +236,10 @@ export class LiveGrid {
       this.px = await this.ex.prices();
       const open = new Set((await this.ex.openOrders()).map((o) => o.orderId));
       for (const c of this.coins.values()) await this.sync(c, open);
+      if (this.reconcilePending) {
+        await this.reconcile();
+        this.reconcilePending = false;
+      }
 
       const stressed = this.host.stressed();
       const candidates = this.host.candidates();
@@ -179,7 +257,7 @@ export class LiveGrid {
           continue;
         }
         const champ = candidates.find((x) => x.symbol === c.symbol);
-        if (!holding && !champ) {
+        if (!holding && !champ && this.now() - this.startedAt > RETIRE_GRACE_MS) {
           await this.flatten(c, 'FORGE retired its grid (flat)');
           continue;
         }

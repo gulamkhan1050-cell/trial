@@ -50,8 +50,36 @@ for queue position.
 - In the browser (`npm run dev` / `npm run preview`) requests go through the Vite proxy at `/bx/...`; the Android app
   calls Binance directly.
 
+- **Restarts keep the trades.** The running grid is saved after every sync; the next Start (same network and key)
+  picks up its orders, bought coins and stats instead of selling at market. If the Binance-held stop fired while the
+  app was off, that coin is re-armed fresh. Only **KILL** closes everything.
+
 Code: `src/exchange/` — `binance.ts` (signed REST client), `liveGrid.ts` (order lifecycle), `liveController.ts`
 (engine ↔ live wiring), `mock.ts` (in-memory exchange used by the tests).
+
+### Headless bot — 24/7 on an Android phone (Termux)
+
+Android pauses apps in the background, so for a week-long run use the headless bot: the same engine and live grid,
+no screen, run by Node inside [Termux](https://f-droid.org/packages/com.termux/) (install it from F-Droid; the Play
+Store version is outdated).
+
+```sh
+pkg update && pkg install -y nodejs-lts git termux-api
+git clone https://github.com/gulamkhan1050-cell/trial.git && cd trial
+npm install
+npm run bot            # first run asks for network (demo/mainnet), key, secret, capital…
+```
+
+- Settings are saved to `bot.config.json` (owner-only), state to `bot-state.json`; both stay on the phone.
+- The console prints each LIVE buy/sell and a status line every minute.
+- `Ctrl+C` stops the bot but **leaves orders and positions on Binance**; `npm run bot` again resumes them.
+- `npm run bot:kill` cancels every bot order and closes every bot position.
+- `run-bot.sh` holds a Termux wake lock and restarts the bot after a crash or network drop (not after Ctrl+C,
+  the kill switch or the loss limit).
+- Android settings → Apps → Termux → Battery → **Unrestricted**, keep the phone on the charger, and don't swipe
+  Termux away from recent apps.
+- A Binance key restricted to one IP won't work on mobile data (the IP changes); on mainnet use home Wi-Fi with a
+  fixed IP, or run the same commands on a small cloud server.
 
 ## Modes
 

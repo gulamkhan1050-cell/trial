@@ -1,6 +1,6 @@
 import { type Engine, WIDE_MARKETS, MEGA_MARKETS } from '../core/engine';
 import { BinanceFutures, type Network } from './binance';
-import { DEFAULT_LIVE, type LiveCandidate, LiveGrid, type LiveHost } from './liveGrid';
+import { DEFAULT_LIVE, type LiveCandidate, LiveGrid, type LiveHost, type LiveSnapshot } from './liveGrid';
 import type { ExchangeClient } from './types';
 
 /**
@@ -47,6 +47,28 @@ export function saveLiveSettings(s: LiveSettings) {
   }
 }
 
+/** Where a running grid is saved, per network and API key, so a restart picks it back up. */
+function snapshotKey(s: LiveSettings) {
+  return `swarmdesk:live:${s.network}:${s.apiKey.slice(0, 8)}`;
+}
+
+function loadSnapshot(s: LiveSettings): LiveSnapshot | null {
+  try {
+    return JSON.parse(localStorage.getItem(snapshotKey(s)) ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
+function saveSnapshot(s: LiveSettings, snap: LiveSnapshot | null) {
+  try {
+    if (snap) localStorage.setItem(snapshotKey(s), JSON.stringify(snap));
+    else localStorage.removeItem(snapshotKey(s));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 export type LiveStatus = 'off' | 'starting' | 'running' | 'killed' | 'error';
 
 export class LiveController {
@@ -55,6 +77,7 @@ export class LiveController {
   message = '';
   network: Network = 'testnet';
   private timer: ReturnType<typeof setInterval> | null = null;
+  private current: LiveSettings | null = null;
 
   constructor(
     private engine: Engine,
@@ -96,7 +119,8 @@ export class LiveController {
         { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, makerFee: this.engine.settings.grid.maker },
         universe,
       );
-      await this.live.start();
+      await this.live.start(loadSnapshot(s));
+      this.current = s;
       this.status = 'running';
       this.timer = setInterval(async () => {
         if (!this.live) return;
@@ -104,7 +128,8 @@ export class LiveController {
         if (this.live.killed) {
           this.status = 'killed';
           this.stopTimer();
-        }
+          saveSnapshot(s, null);
+        } else saveSnapshot(s, this.live.snapshot());
         this.message = this.live.lastError;
         this.engine.notify();
       }, 3000);
@@ -121,8 +146,16 @@ export class LiveController {
   async kill(reason = 'kill switch pressed') {
     this.stopTimer();
     if (this.live) await this.live.kill(reason);
+    if (this.current) saveSnapshot(this.current, null);
     this.status = 'killed';
     this.engine.notify();
+  }
+
+  /** Stop driving the bot but leave its orders and positions on the exchange (resumed next start). */
+  pause() {
+    this.stopTimer();
+    if (this.live && this.current && !this.live.killed) saveSnapshot(this.current, this.live.snapshot());
+    this.status = 'off';
   }
 
   private stopTimer() {

@@ -297,3 +297,69 @@ describe('post-only rejections (-5022)', () => {
     expect((await ex.openOrders()).length).toBe(5); // retried after the back-off
   });
 });
+
+describe('LiveGrid resume after a restart', () => {
+  /** A second session on the same exchange, as after the phone or app restarts. */
+  function restart(ex: MockExchange, cands: LiveCandidate[] = []) {
+    const logs: string[] = [];
+    const host: LiveHost = { candidates: () => cands, stressed: () => false, log: (_k, t) => logs.push(t) };
+    let now = 2_000_000;
+    const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, leverage: 3, maxCoins: 5 }, Object.keys(RULES), () => now);
+    return { live, logs, advance: (ms: number) => (now += ms) };
+  }
+
+  it('keeps the orders and the bought coins, and books the take-profit that fills afterwards', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985); // L1 bought, its take-profit rests at ~0.09999
+    await live.tick();
+    const snap = JSON.parse(JSON.stringify(live.snapshot())); // through storage and back
+    const posBefore = ex.positions.DOGEUSDT.qty;
+    const ordersBefore = (await ex.openOrders()).map((o) => o.orderId).sort();
+
+    // Restart before FORGE has re-judged anything (no candidates yet).
+    const r = restart(ex);
+    await r.live.start(snap);
+    expect(r.live.resumed).toBe(1);
+    expect(ex.calls.filter((c) => c.startsWith('CLOSE'))).toHaveLength(0); // nothing sold at market
+    expect(ex.positions.DOGEUSDT.qty).toBe(posBefore);
+    await r.live.tick();
+    expect((await ex.openOrders()).map((o) => o.orderId).sort()).toEqual(ordersBefore); // same orders, none re-placed
+    expect(r.live.startWallet).toBe(live.startWallet); // "since start" carries on
+
+    ex.setPrice('DOGEUSDT', 0.1); // the take-profit placed by the old session fills
+    await r.live.tick();
+    expect(r.live.roundTrips).toBe(1);
+    expect(r.live.realized).toBeGreaterThan(0);
+    expect(ex.positions.DOGEUSDT.qty).toBe(0);
+    // Flat and FORGE has nothing for it: retired only after the grace period.
+    expect(r.live.coins.has('DOGEUSDT')).toBe(true);
+    r.advance(10 * 60_000 + 1);
+    await r.live.tick();
+    expect(r.live.coins.has('DOGEUSDT')).toBe(false);
+  });
+
+  it('re-arms a coin whose exchange-side stop fired while the app was off', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985);
+    await live.tick(); // holding L1, exchange stop placed
+    const snap = JSON.parse(JSON.stringify(live.snapshot()));
+    ex.setPrice('DOGEUSDT', 0.09); // app is off: the exchange stop closes the position
+    expect(ex.positions.DOGEUSDT.qty).toBe(0);
+    ex.setPrice('DOGEUSDT', 0.1);
+
+    const r = restart(ex, [{ symbol: 'DOGEUSDT', genome: G, score: 0.05 }]);
+    await r.live.start(snap);
+    await r.live.tick();
+    expect(r.logs.some((l) => l.includes('closed while the app was off'))).toBe(true);
+    await r.live.tick();
+    const open = await ex.openOrders();
+    expect(open.every((o) => o.side === 'BUY')).toBe(true); // no orphan take-profits
+    expect(open).toHaveLength(5); // fresh ladder under the current price
+  });
+});
