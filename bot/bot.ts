@@ -69,7 +69,7 @@ async function main() {
   process.on('SIGINT', () => stop(0, 'stopped — orders and positions stay on Binance; run again to resume, or with --kill to close all'));
   process.on('SIGTERM', () => stop(1, 'terminated by the system — will resume on restart'));
 
-  setInterval(() => {
+  setInterval(async () => {
     const live = ctl.live;
     if (!live) return;
     if (ctl.status === 'killed') {
@@ -79,8 +79,17 @@ async function main() {
       process.exit(3);
     }
     const coins = [...live.coins.values()].map((c) => `${c.symbol.replace('USDT', '')} ${c.levels.filter((l) => l.side === 'sell').length}/${c.levels.length}`);
+    // The wallet only moves when Binance realizes profit — against the position's AVERAGE entry — so
+    // it lags the grid's own per-level booking. Wallet + open-position value is the true result.
+    let open = 0;
+    try {
+      for (const c of live.coins.values()) open += (await live.ex.position(c.symbol)).unrealized;
+    } catch {
+      open = NaN;
+    }
+    const total = live.wallet - live.startWallet + open;
     say(
-      `wallet $${live.wallet.toFixed(2)} · since start ${money(live.wallet - live.startWallet)} · round trips ${live.roundTrips} · booked ${money(live.realized)} · ${coins.join('  ') || 'waiting for FORGE'}`,
+      `wallet $${live.wallet.toFixed(2)} · open ${Number.isNaN(open) ? '?' : money(open)} · TOTAL ${Number.isNaN(total) ? '?' : money(total)} · round trips ${live.roundTrips} · booked ${money(live.realized)} · ${coins.join('  ') || 'waiting for FORGE'}`,
     );
     engine.save();
   }, 60_000);
