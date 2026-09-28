@@ -1,5 +1,5 @@
 import { BinanceError } from './binance';
-import type { ExchangeClient, ExOrder, ExPosition, SymbolRules } from './types';
+import { BOT_TAG, type ExchangeClient, type ExOrder, type ExPosition, type SymbolRules } from './types';
 
 interface MockOrder extends ExOrder {
   reduceOnly: boolean;
@@ -19,6 +19,7 @@ export class MockExchange implements ExchangeClient {
   px: Record<string, number> = {};
   leverage: Record<string, number> = {};
   calls: string[] = [];
+  hedgeMode = false;
   private next = 1;
 
   constructor(
@@ -86,6 +87,19 @@ export class MockExchange implements ExchangeClient {
     return { wallet: this.wallet, available: this.wallet - locked };
   }
 
+  async ensureOneWay() {
+    if (this.hedgeMode && [...this.orders.values()].some((o) => o.status === 'NEW'))
+      throw new BinanceError(-4067, 'Position side cannot be changed if there exists open orders.');
+    this.hedgeMode = false;
+  }
+
+  /** Place an order as if a person (not the bot) did it in the Binance app. */
+  manualOrder(symbol: string, side: 'BUY' | 'SELL', qty: number, price: number) {
+    const o: MockOrder = { orderId: this.next++, symbol, side, price, origQty: qty, executedQty: 0, avgPrice: 0, status: 'NEW', reduceOnly: false, clientOrderId: 'web_manual' };
+    this.orders.set(o.orderId, o);
+    return o;
+  }
+
   async setup(symbol: string, leverage: number) {
     this.calls.push(`setup ${symbol} ${leverage}x`);
     this.leverage[symbol] = leverage;
@@ -95,7 +109,7 @@ export class MockExchange implements ExchangeClient {
     this.calls.push(`${side} ${symbol} ${qty}@${price}${reduceOnly ? ' RO' : ''}`);
     const r = this.rulesMap[symbol];
     if (qty * price < r.minNotional - 1e-9) throw new BinanceError(-4164, 'Order notional must be no smaller than minimum');
-    const o: MockOrder = { orderId: this.next++, symbol, side, price, origQty: qty, executedQty: 0, avgPrice: 0, status: 'NEW', reduceOnly };
+    const o: MockOrder = { orderId: this.next++, symbol, side, price, origQty: qty, executedQty: 0, avgPrice: 0, status: 'NEW', reduceOnly, clientOrderId: `${BOT_TAG}${this.next}` };
     const px = this.px[symbol];
     if (px !== undefined && (side === 'BUY' ? price >= px : price <= px)) o.status = 'EXPIRED'; // post-only would cross
     if (reduceOnly && o.status === 'NEW' && !this.canReduce(o)) throw new BinanceError(-2022, 'ReduceOnly Order is rejected.');
@@ -126,6 +140,7 @@ export class MockExchange implements ExchangeClient {
   }
 
   async cancelAll(symbol: string) {
+    if (!this.orders.size && !this.stops.size) return;
     this.calls.push(`CANCEL-ALL ${symbol}`);
     for (const o of this.orders.values()) if (o.symbol === symbol && o.status === 'NEW') o.status = 'CANCELED';
     for (const [id, s] of this.stops) if (s.symbol === symbol) this.stops.delete(id);

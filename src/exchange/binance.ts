@@ -1,4 +1,4 @@
-import type { ExchangeClient, ExOrder, ExPosition, OrderStatus, SymbolRules } from './types';
+import { BOT_TAG, type ExchangeClient, type ExOrder, type ExPosition, type OrderStatus, type SymbolRules } from './types';
 import { roundTo } from './types';
 
 /**
@@ -39,6 +39,7 @@ export class BinanceFutures implements ExchangeClient {
   private offset: number | null = null; // server time − local time
   private key: CryptoKey | null = null;
   private rulesCache: Record<string, SymbolRules> = {};
+  private seq = 0;
 
   constructor(
     private apiKey: string,
@@ -126,11 +127,26 @@ export class BinanceFutures implements ExchangeClient {
     return { wallet: +(usdt?.balance ?? 0), available: +(usdt?.availableBalance ?? 0) };
   }
 
+  async ensureOneWay() {
+    const r = await this.signed<{ dualSidePosition: boolean }>('GET', '/fapi/v1/positionSide/dual');
+    if (!r.dualSidePosition) return;
+    try {
+      await this.signed('POST', '/fapi/v1/positionSide/dual', { dualSidePosition: false });
+    } catch (e) {
+      throw new Error(
+        `your Binance futures account is in Hedge Mode and can't be switched while it has open orders or positions (${(e as Error).message}). ` +
+          'In Binance Futures: cancel open orders, close positions, then Preferences → Position Mode → One-way Mode.',
+      );
+    }
+  }
+
   async setup(symbol: string, leverage: number) {
     try {
       await this.signed('POST', '/fapi/v1/marginType', { symbol, marginType: 'ISOLATED' });
     } catch (e) {
-      if (!(e instanceof BinanceError && e.code === -4046)) throw e; // -4046: already isolated
+      // -4046 already isolated; -4047/-4048/-4067: can't change while this symbol has orders or a
+      // position — keep the current margin type rather than fail.
+      if (!(e instanceof BinanceError && [-4046, -4047, -4048, -4067].includes(e.code))) throw e;
     }
     await this.signed('POST', '/fapi/v1/leverage', { symbol, leverage });
   }
@@ -146,6 +162,7 @@ export class BinanceFutures implements ExchangeClient {
       quantity: qty,
       price,
       ...(reduceOnly ? { reduceOnly: true } : {}),
+      newClientOrderId: `${BOT_TAG}${Date.now().toString(36)}${(this.seq++).toString(36)}`,
     });
     return toOrder(r);
   }
@@ -230,6 +247,7 @@ interface RawOrder {
   executedQty: string;
   avgPrice: string;
   status: OrderStatus;
+  clientOrderId?: string;
 }
 
 function toOrder(r: RawOrder): ExOrder {
@@ -242,5 +260,6 @@ function toOrder(r: RawOrder): ExOrder {
     executedQty: +r.executedQty,
     avgPrice: +r.avgPrice,
     status: r.status,
+    clientOrderId: r.clientOrderId,
   };
 }

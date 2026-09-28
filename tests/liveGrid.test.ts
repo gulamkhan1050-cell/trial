@@ -180,3 +180,67 @@ describe('LiveGrid on a mock exchange', () => {
     expect(await ex.openOrders()).toHaveLength(0);
   });
 });
+
+describe('LiveGrid housekeeping', () => {
+  it("cleans up a previous session's orders on start, then trades normally", async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    expect(await ex.openOrders()).toHaveLength(5);
+    // App restarted: a brand-new session on the same account.
+    const again = setup();
+    const live2 = new LiveGrid(ex, { candidates: () => again.state.cands, stressed: () => false, log: () => undefined }, { ...DEFAULT_LIVE }, ['DOGEUSDT']);
+    await live2.start();
+    expect(await ex.openOrders()).toHaveLength(0); // old ladder cancelled
+    await live2.tick();
+    expect(await ex.openOrders()).toHaveLength(5); // new ladder placed, no -4067 loop
+  });
+
+  it("never touches a coin that has orders the user placed by hand", async () => {
+    const { ex, live, logs } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    ex.manualOrder('DOGEUSDT', 'BUY', 100, 0.09);
+    await live.start();
+    await live.tick();
+    expect(live.coins.has('DOGEUSDT')).toBe(false);
+    expect((await ex.openOrders()).map((o) => o.clientOrderId)).toEqual(['web_manual']);
+    expect(logs.some((l) => l.includes("won't trade it"))).toBe(true);
+    await live.kill('test');
+    expect(await ex.openOrders()).toHaveLength(1); // kill leaves the user's own order alone
+  });
+
+  it('skips a coin whose setup fails instead of stalling every sync', async () => {
+    const { ex, live, logs } = setup([
+      { symbol: 'DOGEUSDT', genome: G, score: 0.1 },
+      { symbol: 'XRPUSDT', genome: G, score: 0.05 },
+    ]);
+    const orig = ex.setup.bind(ex);
+    ex.setup = async (s: string, lev: number) => {
+      if (s === 'DOGEUSDT') throw new Error('Binance -4067: Position side cannot be changed if there exists open orders.');
+      return orig(s, lev);
+    };
+    ex.setPrice('DOGEUSDT', 0.1);
+    ex.setPrice('XRPUSDT', 0.6);
+    await live.start();
+    await live.tick();
+    expect(live.coins.has('DOGEUSDT')).toBe(false);
+    expect(live.coins.has('XRPUSDT')).toBe(true);
+    expect(logs.filter((l) => l.includes('setup failed')).length).toBe(1);
+    await live.tick(); // cooled down: not retried every tick
+    expect(logs.filter((l) => l.includes('setup failed')).length).toBe(1);
+  });
+
+  it('switches Hedge Mode to one-way, or explains how when it cannot', async () => {
+    const a = setup();
+    a.ex.hedgeMode = true;
+    a.ex.setPrice('DOGEUSDT', 0.1);
+    await a.live.start();
+    expect(a.ex.hedgeMode).toBe(false);
+
+    const b = setup();
+    b.ex.hedgeMode = true;
+    b.ex.manualOrder('XRPUSDT', 'BUY', 10, 0.5);
+    await expect(b.live.start()).rejects.toThrow(/Position side/);
+  });
+});

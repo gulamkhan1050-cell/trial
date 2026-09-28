@@ -1,6 +1,6 @@
 import type { GridGenome } from '../core/grid';
 import type { LogEntry } from '../core/types';
-import { type ExchangeClient, type ExOrder, roundDown, roundTo, type SymbolRules } from './types';
+import { BOT_TAG, type ExchangeClient, type ExOrder, roundDown, roundTo, type SymbolRules } from './types';
 
 /**
  * LIVE GRID — runs FORGE's grid designs as real resting orders on an exchange.
@@ -75,6 +75,8 @@ export class LiveGrid {
   private lastBalance = 0;
   private rules: Record<string, SymbolRules> = {};
   private setupDone = new Set<string>();
+  /** Symbols with orders this bot didn't place — left alone entirely. */
+  private foreign = new Set<string>();
   /** Latest prices from the exchange itself (grid levels must sit on the venue's own book). */
   private px: Record<string, number> = {};
 
@@ -94,10 +96,37 @@ export class LiveGrid {
     this.budget = Math.min(this.cfg.maxCapital, b.available);
     if (this.budget < 10) throw new Error(`only $${b.available.toFixed(2)} available in the futures wallet`);
     this.rules = await this.ex.rules(this.universe);
+    await this.ex.ensureOneWay().catch(async (e) => {
+      // Our own leftovers can block the switch: clean them first, then retry once.
+      await this.cleanLeftovers();
+      await this.ex.ensureOneWay().catch(() => {
+        throw e;
+      });
+    });
+    await this.cleanLeftovers();
     this.running = true;
     this.killed = false;
     this.lastBalance = this.now();
     this.host.log('info', `LIVE ${this.ex.name}: wallet $${b.wallet.toFixed(2)} · budget $${this.budget.toFixed(2)} · ${this.cfg.leverage}× · up to ${this.cfg.maxCoins} coins`);
+  }
+
+  /**
+   * Orders tagged by this bot but not tracked by this session (app restarted, Start pressed twice) are
+   * cancelled and their positions closed; symbols with orders someone else placed are skipped.
+   */
+  private async cleanLeftovers() {
+    const open = await this.ex.openOrders();
+    const ours = new Set(open.filter((o) => o.clientOrderId?.startsWith(BOT_TAG) && !this.coins.has(o.symbol)).map((o) => o.symbol));
+    for (const sym of ours) {
+      await this.ex.cancelAll(sym);
+      await this.ex.marketClose(sym);
+      this.host.log('info', `LIVE ${sym}: cleaned up orders left by an earlier session`);
+    }
+    for (const o of open) {
+      if (o.clientOrderId?.startsWith(BOT_TAG) || this.foreign.has(o.symbol)) continue;
+      this.foreign.add(o.symbol);
+      this.host.log('warn', `LIVE ${o.symbol}: has orders you placed yourself — the bot won't trade it`);
+    }
   }
 
   /** Per-coin notional (margin × leverage). */
@@ -175,14 +204,21 @@ export class LiveGrid {
   private async allocate(candidates: LiveCandidate[]) {
     for (const cand of candidates) {
       if (this.coins.size >= this.cfg.maxCoins) break;
-      if (this.coins.has(cand.symbol)) continue;
+      if (this.coins.has(cand.symbol) || this.foreign.has(cand.symbol)) continue;
       if ((this.cooldown.get(cand.symbol) ?? 0) > this.now()) continue;
       if (this.levelsFor(cand.symbol, cand.genome) < 1) continue; // exchange minimum too big for our slice
       const px = this.px[cand.symbol];
       if (!px) continue;
       if (!this.setupDone.has(cand.symbol)) {
-        await this.ex.setup(cand.symbol, this.cfg.leverage);
-        this.setupDone.add(cand.symbol);
+        try {
+          await this.ex.setup(cand.symbol, this.cfg.leverage);
+          this.setupDone.add(cand.symbol);
+        } catch (e) {
+          // One coin failing setup must not stall the rest: skip it for a while.
+          this.cooldown.set(cand.symbol, this.now() + this.cfg.cooldownMs);
+          this.host.log('warn', `LIVE ${cand.symbol}: setup failed (${(e as Error).message}) — skipping it for 30 min`);
+          continue;
+        }
       }
       const c: LiveCoin = { symbol: cand.symbol, genome: cand.genome, rules: this.rules[cand.symbol], center: px, levels: [], stopPrice: 0, lastTrail: this.now() };
       this.lay(c, cand.genome, px);
@@ -305,6 +341,8 @@ export class LiveGrid {
   async kill(reason: string) {
     this.killed = true;
     this.running = false;
+    // Also sweep any of this bot's orders the session isn't tracking (earlier sessions).
+    await this.cleanLeftovers().catch(() => undefined);
     for (const c of [...this.coins.values()]) {
       try {
         await this.flatten(c, reason);

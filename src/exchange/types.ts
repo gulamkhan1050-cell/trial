@@ -19,7 +19,11 @@ export interface ExOrder {
   executedQty: number;
   avgPrice: number;
   status: OrderStatus;
+  clientOrderId?: string;
 }
+
+/** Prefix on every order this bot places, so it can recognise (and clean up) its own orders. */
+export const BOT_TAG = 'sd_';
 
 export interface ExPosition {
   qty: number; // signed: + long, − short
@@ -34,6 +38,8 @@ export interface ExchangeClient {
   prices(): Promise<Record<string, number>>;
   /** USDT wallet balance and what's free for new orders. */
   balance(): Promise<{ wallet: number; available: number }>;
+  /** Make sure the account is in one-way position mode (grid orders don't send a position side). */
+  ensureOneWay(): Promise<void>;
   /** Isolated margin + leverage for a symbol (idempotent). */
   setup(symbol: string, leverage: number): Promise<void>;
   /** Post-only limit order (maker or nothing: rejected instead of crossing the book). */
