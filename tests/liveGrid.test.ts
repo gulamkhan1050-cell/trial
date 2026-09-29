@@ -405,3 +405,23 @@ describe('LiveGrid resume after a restart', () => {
     expect(open).toHaveLength(5); // fresh ladder under the current price
   });
 });
+
+describe('LiveGrid count reset', () => {
+  it('starts total, round trips and per-day from zero without touching orders', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985);
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.tick();
+    expect(live.roundTrips).toBe(1);
+    const orders = (await ex.openOrders()).map((o) => o.orderId).sort();
+    live.resetStats();
+    expect(live.roundTrips).toBe(0);
+    expect(live.realized).toBe(0);
+    expect(live.wallet - live.startWallet + live.unrealized).toBeCloseTo(0, 9);
+    expect((await ex.openOrders()).map((o) => o.orderId).sort()).toEqual(orders);
+  });
+});

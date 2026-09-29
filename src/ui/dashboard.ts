@@ -254,7 +254,7 @@ export class Dashboard {
             <select data-live="compound">${opt('1', l.compound ? '1' : '0', 'On — budget grows with profit, shrinks with loss')}${opt('0', l.compound ? '1' : '0', 'Off — fixed budget')}</select></label>
         </div>
         <div class="presets">
-          <button class="ghost" data-act="live-aggressive">⚡ Aggressive: $300 (≈₹25k) · 5× · 8 coins · reinvest · 20% loss limit</button>
+          <button class="ghost ${isAggressive(l) ? 'on-profile' : ''}" data-act="live-aggressive">${isAggressive(l) ? '✓ AGGRESSIVE ON' : '⚡ Aggressive'}: $300 (≈₹25k) · 5× · 8 coins · reinvest · 20% loss limit</button>
           <button class="ghost" data-act="live-check">Check connection</button>
           <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
           <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
@@ -289,7 +289,12 @@ export class Dashboard {
         <h3>Live account · Binance ${esc(this.liveCtl.network)} <span class="dim">${esc(this.liveCtl.status)}</span></h3>
         <div class="stats">
           ${stat('TOTAL result', `<span class="${cls(total)}">${signed(total)}</span> <span class="dim small">${pct(total / lv.budget, 1)} of $${lv.budget.toFixed(0)}</span>`)}
-          ${stat('Per day', `<span class="${cls(total)}">${signed(total / days)}</span> <span class="dim small">over ${days < 1 ? `${(days * 24).toFixed(1)} h` : `${days.toFixed(1)} days`}</span>`)}
+          ${stat(
+            'Per day',
+            days * 24 < 3
+              ? `<span class="dim">after 3 h</span> <span class="dim small">running ${(days * 24).toFixed(1)} h — too early to project</span>`
+              : `<span class="${cls(total)}">${signed(total / days)}</span> <span class="dim small">over ${days < 1 ? `${(days * 24).toFixed(1)} h` : `${days.toFixed(1)} days`}</span>`,
+          )}
           ${stat('Wallet', `${usd(lv.wallet)} <span class="dim small">${signed(pnl)} realized</span>`)}
           ${stat('Held coins now', `<span class="${cls(lv.unrealized)}">${signed(lv.unrealized)}</span>`)}
           ${stat('Round trips', `${lv.roundTrips} <span class="dim small">booked ${signed(lv.realized)}</span>`)}
@@ -298,7 +303,10 @@ export class Dashboard {
         <p class="dim small">This box is your Binance account. Everything below it is the paper simulation ($1,000 of play money on all 15 coins) that FORGE uses to pick coins — not your money.</p>
         <div class="stages">${coins || '<span class="dim small">waiting for FORGE to approve coins…</span>'}</div>
         ${lv.lastError ? `<p class="down small">${esc(lv.lastError)}</p>` : ''}
-        <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
+        <div class="presets">
+          <button class="ghost" data-act="live-zero">↺ Start count from zero</button>
+          <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
+        </div>
       </section>`;
   }
 
@@ -307,7 +315,11 @@ export class Dashboard {
     if (!c) return;
     const s = this.liveSettings;
     try {
-      if (act === 'live-aggressive') {
+      if (act === 'live-zero') {
+        if (!confirm('Start counting from zero now? Orders and coins stay as they are — only the TOTAL, per-day and round-trip counters restart.')) return;
+        c.resetStats();
+        this.renderTab(true);
+      } else if (act === 'live-aggressive') {
         // Real-week Arena: 5x made +10% to +23% a week on 15 coins, with drops of 14-20% along the way.
         Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true });
         saveLiveSettings(s);
@@ -690,4 +702,9 @@ function kpi(label: string, value: string, sub: string): string {
 
 function stat(label: string, value: string): string {
   return `<div><small>${label}</small><b>${value}</b></div>`;
+}
+
+/** The one-click aggressive profile is active (so its button can show it). */
+function isAggressive(l: LiveSettings): boolean {
+  return l.maxCapital === 300 && l.leverage === 5 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound;
 }

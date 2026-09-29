@@ -71,6 +71,7 @@ export interface LiveSnapshot {
   roundTrips: number;
   realized: number;
   since?: number;
+  baseBudget?: number;
   coins: LiveCoin[];
   cooldown: [string, number][];
 }
@@ -129,7 +130,7 @@ export class LiveGrid {
     // A resumed session already has margin tied up in its own orders and positions.
     this.budget = Math.min(this.cfg.maxCapital, resume?.coins.length ? b.wallet : b.available);
     if (this.budget < 10) throw new Error(`only $${b.available.toFixed(2)} available in the futures wallet`);
-    this.baseBudget = this.budget;
+    this.baseBudget = resume?.baseBudget ?? this.budget;
     this.rules = await this.ex.rules(this.universe);
     if (resume) this.restore(resume);
     await this.ex.ensureOneWay().catch(async (e) => {
@@ -149,6 +150,16 @@ export class LiveGrid {
     if (this.resumed) this.host.log('info', `LIVE resumed ${this.resumed} coin(s) from the last session — their orders and positions were kept`);
   }
 
+  /** Count from zero from now on (orders and positions are untouched): total, per-day, round trips, loss limit. */
+  resetStats() {
+    this.startWallet = this.wallet + this.unrealized;
+    this.baseBudget = this.budget;
+    this.roundTrips = 0;
+    this.realized = 0;
+    this.since = this.now();
+    this.host.log('info', `LIVE count reset to zero · equity $${this.startWallet.toFixed(2)}`);
+  }
+
   snapshot(): LiveSnapshot {
     return {
       v: 1,
@@ -157,6 +168,7 @@ export class LiveGrid {
       roundTrips: this.roundTrips,
       realized: this.realized,
       since: this.since,
+      baseBudget: this.baseBudget,
       coins: [...this.coins.values()],
       cooldown: [...this.cooldown],
     };

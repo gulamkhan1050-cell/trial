@@ -158,6 +158,14 @@ export class LiveController {
     this.engine.notify();
   }
 
+  /** Start counting profit from zero now; trading carries on untouched. */
+  resetStats() {
+    if (!this.live || !this.current) return;
+    this.live.resetStats();
+    saveSnapshot(this.current, this.live.snapshot());
+    this.engine.notify();
+  }
+
   /** Stop driving the bot but leave its orders and positions on the exchange (resumed next start). */
   pause() {
     this.stopTimer();
