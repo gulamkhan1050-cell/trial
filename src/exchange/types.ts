@@ -51,7 +51,8 @@ export interface ExchangeClient {
   marketClose(symbol: string): Promise<void>;
   cancel(symbol: string, orderId: number): Promise<void>;
   cancelAll(symbol: string): Promise<void>;
-  openOrders(): Promise<ExOrder[]>;
+  /** All open orders, or just one symbol's (much cheaper on Binance's rate limit). */
+  openOrders(symbol?: string): Promise<ExOrder[]>;
   order(symbol: string, orderId: number): Promise<ExOrder>;
   position(symbol: string): Promise<ExPosition>;
 }

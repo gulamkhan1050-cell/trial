@@ -1,23 +1,16 @@
-import { unrealized } from '../agents/hawk';
 import { DEFAULT_SENTRY } from '../agents/sentry';
-import { DEFAULT_SETTINGS, MAJORS, MEGA_MARKETS, WIDE_MARKETS, type Engine, fmtPrice, type Settings, type SymbolState } from '../core/engine';
-import { GENE_RANGES } from '../core/evolver';
-import { edgeStats, sizedRisk } from '../core/kelly';
+import { DEFAULT_SETTINGS, MAJORS, MEGA_MARKETS, WIDE_MARKETS, type Engine, fmtPrice, type Settings } from '../core/engine';
 import type { AgentId } from '../core/types';
-import { barsChart, candleChart, kellyChart, lineChart } from './charts';
-import { type MMArenaResult, runMMArena } from '../core/mmArena';
+import { barsChart, candleChart, lineChart } from './charts';
 import { type LiveController, type LiveSettings, loadLiveSettings, saveLiveSettings } from '../exchange/liveController';
 import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, gridVariants, runArena } from '../core/arena';
 
-type Tab = 'desk' | 'grid' | 'arena' | 'markets' | 'forge' | 'log' | 'setup';
+type Tab = 'grid' | 'log' | 'arena' | 'setup';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'desk', label: 'Desk' },
-  { id: 'grid', label: 'Grid' },
+  { id: 'grid', label: 'Live' },
+  { id: 'log', label: 'Trades' },
   { id: 'arena', label: 'Arena' },
-  { id: 'markets', label: 'Markets' },
-  { id: 'forge', label: 'Forge' },
-  { id: 'log', label: 'Log' },
   { id: 'setup', label: 'Setup' },
 ];
 
@@ -37,22 +30,10 @@ const cls = (x: number) => (x > 0 ? 'up' : x < 0 ? 'down' : '');
 const short = (s: string) => s.replace('USDT', '');
 
 export class Dashboard {
-  private tab: Tab = 'desk';
+  private tab: Tab = 'grid';
   private symbol: string;
   private frame = 0;
   private body!: HTMLElement;
-  private mm: {
-    running: boolean;
-    progress: ArenaProgress | null;
-    results: MMArenaResult[] | null;
-    note: string;
-    error: string;
-    signal: { cancelled: boolean };
-    source: 'real' | 'sim';
-    hours: number;
-    coins: string;
-    fillProb: number;
-  } = { running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', hours: 6, coins: 'BTCUSDT,ETHUSDT,SOLUSDT', fillProb: 0.5 };
   private arena: {
     running: boolean;
     progress: ArenaProgress | null;
@@ -123,10 +104,9 @@ export class Dashboard {
     if (this.tab === 'arena') {
       if (full) this.body.innerHTML = this.arenaView();
       this.renderArenaLive();
-      this.renderMMLive();
       return;
     }
-    const html = this.tab === 'desk' ? this.deskView() : this.tab === 'grid' ? this.gridView() : this.tab === 'markets' ? this.marketsView() : this.tab === 'forge' ? this.forgeView() : this.logView();
+    const html = this.tab === 'grid' ? this.gridView() : this.logView();
     this.body.innerHTML = html;
     this.drawCharts();
   }
@@ -145,98 +125,6 @@ export class Dashboard {
       <span class="mono dim">${hh}:${mm}:${ss}</span>
       <button class="run ${e.running ? 'on' : ''}" data-act="toggle">${e.running ? '■ STOP' : '▶ START'}</button>
       ${e.feedStatus === 'replay' || e.feedStatus === 'connecting' ? `<span class="feed-detail mono dim">${esc(e.feedDetail)}</span>` : ''}`;
-  }
-
-  // ------------------------------------------------------------ DESK
-
-  private deskView(): string {
-    const e = this.engine;
-    const eq = e.totalEquity();
-    const net = eq - e.startBalance;
-    const wins = e.trades.filter((t) => t.pnl > 0).length;
-    const f = e.forgeTotals();
-    const lv = this.liveCtl?.live;
-    const liveTotal = lv ? lv.wallet - lv.startWallet + lv.unrealized : 0;
-    return `
-      ${
-        lv
-          ? `<p class="small"><b>Binance account:</b> <span class="${cls(liveTotal)}">${signed(liveTotal)}</span> total · see the Grid tab.
-             <span class="dim">The numbers below are the paper simulation ($1,000 play money), not your Binance money.</span></p>`
-          : ''
-      }
-      <section class="kpis">
-        ${kpi(lv ? 'Paper balance' : 'Session balance', usd(eq), `start ${usd(e.startBalance)}`)}
-        ${kpi('Net PnL', `<span class="${cls(net)}">${signed(net)}</span>`, `<span class="${cls(net)}">${pct(net / e.startBalance, 2)}</span> · day ${signed(e.dayPnl)}`)}
-        ${kpi('Win rate', pct(e.winRate()), `${wins}W / ${e.trades.length - wins}L`)}
-        ${kpi('In position', String(e.positions.length), `open ${signed(e.openPnl())}`)}
-      </section>
-
-      <section class="card">
-        <h3>Balance history <span class="dim">USD</span></h3>
-        <canvas id="c-equity" class="chart"></canvas>
-      </section>
-
-      <section class="card">
-        <h3>Decision pipeline <span class="dim">read → gate → execute</span></h3>
-        <div class="agents">${(Object.keys(AGENT_META) as AgentId[]).map((a) => this.agentCard(a)).join('')}</div>
-        <div class="stages">${[...e.symbols.values()].map((s) => stageChip(s)).join('')}</div>
-      </section>
-
-      <div class="split">
-        <section class="card">
-          <h3>Entry checks <span class="dim">SENTRY</span></h3>
-          ${this.gateView()}
-        </section>
-        <section class="card">
-          <h3>Position control <span class="dim">HAWK</span></h3>
-          ${this.positionsView()}
-        </section>
-      </div>
-
-      <section class="card">
-        <h3>Decision log <span class="dim">${f.live}/${e.symbols.size} markets armed · ${e.vetoes} vetoes</span></h3>
-        ${this.logList(8)}
-      </section>`;
-  }
-
-  private agentCard(a: AgentId): string {
-    const st = this.engine.agents[a];
-    const recent = Date.now() - st.at < 4000;
-    return `<div class="agent ${recent || st.busy ? 'busy' : ''}" style="--c:${AGENT_META[a].color}">
-      <i></i><div><b>${a}</b><small>${AGENT_META[a].role}</small><em>${esc(st.text)}</em></div></div>`;
-  }
-
-  private gateView(): string {
-    const g = this.engine.lastGate;
-    if (!g) return `<p class="empty">No setup has reached the gate yet.</p>`;
-    const passed = g.verdict.checks.filter((c) => c.pass).length;
-    return `
-      <div class="gate-head"><b>${short(g.symbol)} ${g.signal.dir === 1 ? 'LONG' : 'SHORT'}</b>
-        <span class="${g.verdict.pass ? 'up' : 'down'}">${g.verdict.pass ? '✓ PASSED' : '✕ VETO'} · ${passed}/3</span></div>
-      ${g.verdict.checks
-        .map(
-          (c) => `<div class="check"><span>${c.name}</span>${meter(c.score, c.pass)}<small class="${c.pass ? '' : 'down'}">${esc(c.detail)}</small></div>`,
-        )
-        .join('')}
-      ${g.verdict.blockedBy ? `<p class="down small">${esc(g.verdict.blockedBy)}</p>` : ''}
-      <p class="dim small">${time(g.at)} · ${esc(g.signal.reason)}</p>`;
-  }
-
-  private positionsView(): string {
-    const e = this.engine;
-    if (!e.positions.length)
-      return `<p class="big dim">FLAT</p><p class="dim small">Size vs bank · never vs mood · no revenge entries</p>`;
-    return `<p class="big up">IN POSITION</p>
-      ${e.positions
-        .map((p) => {
-          const px = e.price(p.symbol) || p.entry;
-          const u = unrealized(p, px);
-          return `<div class="pos"><b>${short(p.symbol)} ${p.dir === 1 ? 'LONG' : 'SHORT'}</b>
-            <span class="${cls(u)}">${signed(u)}</span>
-            <small>entry ${fmtPrice(p.entry)} · now ${fmtPrice(px)} · stop ${fmtPrice(p.stop)} · tp ${fmtPrice(p.take)}</small></div>`;
-        })
-        .join('')}
-      <button class="ghost" data-act="flatten">Close all</button>`;
   }
 
   private logList(n: number): string {
@@ -362,9 +250,11 @@ export class Dashboard {
             <select data-live="maxCoins">${[1, 2, 3, 4, 5, 6, 8, 10].map((x) => opt(x, l.maxCoins, String(x))).join('')}</select></label>
           <label>Loss limit (% of wallet) → kill
             <input type="number" min="1" max="50" data-live="dailyLossLimit" value="${pctInput(l.dailyLossLimit)}"></label>
+          <label>Reinvest profit
+            <select data-live="compound">${opt('1', l.compound ? '1' : '0', 'On — budget grows with profit, shrinks with loss')}${opt('0', l.compound ? '1' : '0', 'Off — fixed budget')}</select></label>
         </div>
         <div class="presets">
-          <button class="ghost" data-act="live-aggressive">⚡ Aggressive: $300 (≈₹25k) · 5× · 8 coins · 20% loss limit</button>
+          <button class="ghost" data-act="live-aggressive">⚡ Aggressive: $300 (≈₹25k) · 5× · 8 coins · reinvest · 20% loss limit</button>
           <button class="ghost" data-act="live-check">Check connection</button>
           <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
           <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
@@ -403,7 +293,7 @@ export class Dashboard {
           ${stat('Wallet', `${usd(lv.wallet)} <span class="dim small">${signed(pnl)} realized</span>`)}
           ${stat('Held coins now', `<span class="${cls(lv.unrealized)}">${signed(lv.unrealized)}</span>`)}
           ${stat('Round trips', `${lv.roundTrips} <span class="dim small">booked ${signed(lv.realized)}</span>`)}
-          ${stat('Budget · coins', `${usd(lv.budget)} × ${lv.cfg.leverage} · ${lv.coins.size}/${lv.cfg.maxCoins}`)}
+          ${stat('Budget · coins', `${usd(lv.budget)} × ${lv.cfg.leverage} · ${lv.coins.size}/${lv.cfg.maxCoins}${lv.cfg.compound && Math.abs(lv.budget - lv.baseBudget) >= 0.01 ? ` <span class="dim small">reinvesting (started ${usd(lv.baseBudget)})</span>` : ''}`)}
         </div>
         <p class="dim small">This box is your Binance account. Everything below it is the paper simulation ($1,000 of play money on all 15 coins) that FORGE uses to pick coins — not your money.</p>
         <div class="stages">${coins || '<span class="dim small">waiting for FORGE to approve coins…</span>'}</div>
@@ -419,7 +309,7 @@ export class Dashboard {
     try {
       if (act === 'live-aggressive') {
         // Real-week Arena: 5x made +10% to +23% a week on 15 coins, with drops of 14-20% along the way.
-        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2 });
+        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true });
         saveLiveSettings(s);
         const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
         this.engine.updateSettings({ ...PRESETS.live5, grid: { ...PRESETS.live5.grid!, ...fees } });
@@ -478,102 +368,7 @@ export class Dashboard {
         </div>
         <button class="run-arena" data-act="arena">${a.running ? '■ Cancel' : '▶ Run arena'}</button>
       </section>
-      <div id="arena-live"></div>
-      <section class="card form">
-        <h3>Market maker · 1-second <span class="dim">two-sided quotes, every second</span></h3>
-        <p class="dim small">Rests a buy just under and a sell just over the price on each coin every second and earns the gap,
-        skewing quotes to shed inventory. Tuned per coin on the first quarter of the data, tested on the rest, at four maker-fee levels.</p>
-        <div class="arena-controls">
-          <label>Prices
-            <select data-mm="source">${opt('real', this.mm.source, 'Real Binance 1s history')}${opt('sim', this.mm.source, 'Offline simulator')}</select></label>
-          <label>Period
-            <select data-mm="hours">${opt(1, this.mm.hours, 'Last 1 hour')}${opt(6, this.mm.hours, 'Last 6 hours')}${opt(24, this.mm.hours, 'Last 24 hours')}</select></label>
-          <label>Coins
-            <select data-mm="coins">${opt('BTCUSDT', this.mm.coins, 'BTC')}${opt('BTCUSDT,ETHUSDT,SOLUSDT', this.mm.coins, 'BTC, ETH, SOL')}${opt(MAJORS.join(','), this.mm.coins, '6 majors')}</select></label>
-          <label>Fill chance when price trades through a quote
-            <select data-mm="fillProb">${opt(0.25, this.mm.fillProb, '25% (busy queue)')}${opt(0.5, this.mm.fillProb, '50%')}${opt(1, this.mm.fillProb, '100% (optimistic)')}</select></label>
-        </div>
-        <button class="run-arena" data-act="mm">${this.mm.running ? '■ Cancel' : '▶ Run market maker'}</button>
-      </section>
-      <div id="mm-live"></div>`;
-  }
-
-  private renderMMLive() {
-    const el = this.body.querySelector<HTMLElement>('#mm-live');
-    if (!el) return;
-    const m = this.mm;
-    const btn = this.body.querySelector<HTMLButtonElement>('[data-act=mm]');
-    if (btn) btn.textContent = m.running ? '■ Cancel' : '▶ Run market maker';
-    let html = '';
-    if (m.running && m.progress)
-      html += `<section class="card"><h3>Running <span class="dim">${esc(m.progress.stage)}</span></h3>
-        <div class="bar big"><i style="width:${Math.round(m.progress.pct * 100)}%"></i></div><p class="dim small">${esc(m.progress.text)}</p></section>`;
-    if (m.error) html += `<section class="card"><p class="down">${esc(m.error)}</p></section>`;
-    if (m.results?.length) {
-      const start = m.results[0].start;
-      html += `<section class="card"><h3>Market maker result <span class="dim">${esc(m.note)}</span></h3>
-        ${m.note.startsWith('offline') ? '<p class="warn small">Offline 1s prices are a random walk — use Real Binance 1s history to judge.</p>' : ''}
-        <canvas id="c-mm" class="chart tall"></canvas>
-        <p class="legend">${m.results.map((r, i) => `<i style="background:var(${ARENA_COLORS[i]})"></i>${esc(r.name)}`).join(' ')}</p></section>
-        <div class="split">${m.results
-          .map((r, i) => {
-            const pnl = r.final - start;
-            const trips = Math.max(1, r.fills / 2);
-            const coins = Object.entries(r.params)
-              .map(([sym, p]) => `${short(sym)} ±${(p.halfSpread * 100).toFixed(3)}%`)
-              .join(' · ');
-            return `<section class="card"><h3><span style="color:var(${ARENA_COLORS[i]})">${esc(r.name)}</span></h3>
-              <p class="big ${cls(pnl)}">${usd(r.final)} <small>${signed(pnl)} · ${pct(pnl / start, 2)}</small></p>
-              <div class="stats">
-                ${stat('Fills', r.fills.toLocaleString())}
-                ${stat('Volume', usd(r.volume))}
-                ${stat('Per round trip', `${pnl / trips >= 0 ? '+' : '-'}${(Math.abs(pnl / trips) * 100).toFixed(2)}¢`)}
-                ${stat('Fees', signed(-r.fees))}
-                ${stat('Max drawdown', pct(r.maxDrawdown, 2))}
-                ${stat('Stops', String(r.stops))}
-              </div><p class="dim small">quotes ${esc(coins)}</p></section>`;
-          })
-          .join('')}</div>`;
-    }
-    el.innerHTML = html;
-    const c = el.querySelector<HTMLCanvasElement>('#c-mm');
-    if (c && m.results?.length)
-      lineChart(c, m.results.map((r, i) => ({ values: r.equity.map((p) => p.v), color: ARENA_COLORS[i], width: 2 })), (v) => `$${v.toFixed(0)}`, m.results[0].start);
-  }
-
-  private async toggleMM() {
-    const m = this.mm;
-    if (m.running) {
-      m.signal.cancelled = true;
-      return;
-    }
-    Object.assign(m, { running: true, error: '', results: null, signal: { cancelled: false }, progress: { stage: 'download', pct: 0, text: 'starting…' } });
-    this.renderMMLive();
-    const g = this.engine.settings.grid;
-    // Rebate, zero, a typical VIP maker fee, and the user's own maker fee from Setup.
-    const fees = [...new Set([-0.00005, 0, 0.0001, g.maker])].sort((a, b) => a - b);
-    try {
-      const out = await runMMArena({
-        symbols: m.coins.split(','),
-        hours: m.hours,
-        source: m.source,
-        makerFees: fees,
-        takerFee: g.taker,
-        fillProb: m.fillProb,
-        capital: this.engine.settings.startBalance,
-        signal: m.signal,
-        onProgress: (p) => {
-          m.progress = p;
-          if (this.tab === 'arena') this.renderMMLive();
-        },
-      });
-      m.results = out.results;
-      m.note = out.note;
-    } catch (err) {
-      m.error = `Market maker failed: ${(err as Error).message}`;
-    }
-    m.running = false;
-    if (this.tab === 'arena') this.renderMMLive();
+      <div id="arena-live"></div>`;
   }
 
   private renderArenaLive() {
@@ -671,114 +466,28 @@ export class Dashboard {
     if (this.tab === 'arena') this.renderArenaLive();
   }
 
-  // ------------------------------------------------------------ MARKETS
-
-  private marketsView(): string {
-    const e = this.engine;
-    const s = e.symbols.get(this.symbol);
-    const chips = e.settings.symbols
-      .map((sym) => {
-        const st = e.symbols.get(sym);
-        const c = st?.candles ?? [];
-        const px = e.price(sym);
-        const ref = c[Math.max(0, c.length - 60)]?.c ?? px;
-        const ch = ref ? (px - ref) / ref : 0;
-        return `<button class="sym ${sym === this.symbol ? 'on' : ''}" data-sym="${sym}"><b>${short(sym)}</b>
-          <span class="mono">${px ? fmtPrice(px) : '—'}</span><small class="${cls(ch)}">${pct(ch, 2)} 60 bars</small></button>`;
-      })
-      .join('');
-    const champ = s?.evolver.champion;
-    const g = champ?.genome;
-    return `
-      <div class="syms">${chips}</div>
-      <section class="card">
-        <h3>${short(this.symbol)} / USDT <span class="dim">${e.barLabel()} · last 120 bars</span></h3>
-        <canvas id="c-candles" class="chart tall"></canvas>
-      </section>
-      <section class="card">
-        <h3>Live strategy <span class="dim">FORGE champion</span></h3>
-        ${
-          g && champ
-            ? `<div class="stats">
-                ${stat('Family', g.regime)}
-                ${stat('OOS return', pct(champ.test.totalReturn, 2))}
-                ${stat('OOS trades', String(champ.test.trades.length))}
-                ${stat('Win rate', pct(champ.test.winRate))}
-                ${stat('Expectancy', `${champ.test.expectancyR.toFixed(2)}R`)}
-                ${stat('Max DD', pct(champ.test.maxDrawdown, 2))}
-              </div>
-              <p class="dim small">stop ${g.stopAtr}×ATR · target ${g.takeAtr}×ATR · trail ${g.trailAtr}×ATR · signal: ${esc(s?.lastSignal?.reason ?? 'waiting')}</p>`
-            : `<p class="empty">No strategy has survived the out-of-sample gate for this market yet — SENTRY keeps it benched.</p>`
-        }
-      </section>`;
-  }
-
-  // ------------------------------------------------------------ FORGE
-
-  private forgeView(): string {
-    const e = this.engine;
-    const f = e.forgeTotals();
-    const s = e.symbols.get(this.symbol);
-    const ev = s?.evolver;
-    const last = ev?.history[ev.history.length - 1];
-    const champ = ev?.champion;
-    const t = champ?.test;
-    const { w, payoff } = t ? edgeStats(t) : { w: 0, payoff: 0 };
-    const chosen = t ? sizedRisk(w, payoff, 1) : 0;
-    const genes = champ
-      ? (Object.keys(GENE_RANGES) as (keyof typeof GENE_RANGES)[])
-          .map((k) => {
-            const [lo, hi] = GENE_RANGES[k];
-            const v = champ.genome[k];
-            return `<div class="gene"><span>${k}</span><div class="bar"><i style="width:${((v - lo) / (hi - lo)) * 100}%"></i></div><b class="mono">${v}</b></div>`;
-          })
-          .join('')
-      : '';
-    return `
-      <section class="kpis">
-        ${kpi('Generation', `#${f.gen}`, 'observe · mutate · test · select')}
-        ${kpi('Tested', f.tested.toLocaleString(), 'backtests run')}
-        ${kpi('Kill rate', pct(f.killRate), 'fail the out-of-sample gate')}
-        ${kpi('Armed', `${f.live}/${e.symbols.size}`, 'markets with a champion')}
-      </section>
-      <div class="syms">${e.settings.symbols.map((sym) => `<button class="sym slim ${sym === this.symbol ? 'on' : ''}" data-sym="${sym}"><b>${short(sym)}</b><small>gen ${e.symbols.get(sym)?.evolver.generation ?? 0}</small></button>`).join('')}</div>
-      <section class="card">
-        <h3>Fitness · best of generation <span class="dim">${short(this.symbol)} · every generation must beat the gate or it dies</span></h3>
-        <canvas id="c-fitness" class="chart"></canvas>
-        <p class="legend"><i style="background:var(--up)"></i>best <i style="background:var(--muted)"></i>population mean</p>
-      </section>
-      <div class="split">
-        <section class="card">
-          <h3>Natural selection <span class="dim">gen ${last?.gen ?? 0}</span></h3>
-          ${funnel('Generated', last?.generated ?? 0, DEFAULT_POP)}
-          ${funnel('Backtested', last?.backtested ?? 0, DEFAULT_POP)}
-          ${funnel('Passed gate', last?.passedGate ?? 0, DEFAULT_POP)}
-          ${funnel('Live', last?.survivors ?? 0, DEFAULT_POP)}
-        </section>
-        <section class="card">
-          <h3>Kelly sizing <span class="dim">half-Kelly, capped</span></h3>
-          ${
-            t
-              ? `<p class="big">${pct(Math.min(chosen, e.settings.hawk.maxRiskPerTrade), 2)} <small class="dim">risk / trade</small></p>
-                 <canvas id="c-kelly" class="chart short"></canvas>
-                 <p class="dim small">win ${pct(w)} (smoothed) · payoff ${payoff.toFixed(2)} · raw half-Kelly ${pct(chosen, 2)} · cap ${pct(e.settings.hawk.maxRiskPerTrade, 1)}</p>`
-              : `<p class="empty">Needs a champion.</p>`
-          }
-        </section>
-      </div>
-      <section class="card">
-        <h3>Genome <span class="dim">${champ ? `${champ.genome.regime} · ${champ.genome.id}` : 'none alive'}</span></h3>
-        ${genes || '<p class="empty">No survivor yet.</p>'}
-      </section>`;
-  }
-
   // ------------------------------------------------------------ LOG
 
   private logView(): string {
     const trades = this.engine.trades.slice(0, 40);
+    const fills = this.engine.log.filter((l) => /^(LIVE (BUY|SELL)|✕ LIVE)/.test(l.text)).slice(0, 60);
     return `
+      <section class="card live-card">
+        <h3>Binance fills <span class="dim">your account · newest first</span></h3>
+        ${
+          fills.length
+            ? `<ul class="log">${fills
+                .map(
+                  (l) => `<li class="${l.kind}"><span class="mono dim">${time(l.t)}</span><span>${esc(l.text)}</span>${
+                    l.pnl !== undefined ? `<span class="mono ${cls(l.pnl)}">${signed(l.pnl)}</span>` : ''
+                  }</li>`,
+                )
+                .join('')}</ul>`
+            : '<p class="empty">No Binance fills yet — start live trading in Setup.</p>'
+        }
+      </section>
       <section class="card">
-        <h3>Trades <span class="dim">${this.engine.trades.length} closed</span></h3>
+        <h3>Paper trades <span class="dim">coin-picker simulation · ${this.engine.trades.length} closed · not your money</span></h3>
         <canvas id="c-trades" class="chart mini"></canvas>
         ${
           trades.length
@@ -802,90 +511,23 @@ export class Dashboard {
   private setupView(): string {
     const s = this.engine.settings;
     return `
-      <section class="card">
-        <h3>Presets <span class="dim">paper only</span></h3>
-        <div class="presets">
-          <button class="ghost primary" data-preset="live">★ Live grid — 15 coins, 3×, real-time paper</button>
-          <button class="ghost" data-preset="live5">★ Live grid aggressive — 15 coins, 5×</button>
-          <button class="ghost" data-preset="grid">▦ Grid — replay last ~30h fast</button>
-          <button class="ghost" data-preset="replay">⏩ Directional — replay</button>
-          <button class="ghost" data-preset="fast">Directional live — 15 markets</button>
-          <button class="ghost" data-preset="standard">Directional live — 6 majors</button>
-        </div>
-        <p class="dim small">★ Real 7-day Arena runs, 15 coins: 3× made +6% to +14% (worst drops ~9–11%); 5× made +10% to +23% (worst drops ~14–20%). Directional agents lost 29–37% in every run.</p>
-        <p class="dim small">Grid micro-trading runs a ladder of limit buys on each of 15 coins, with an equal slice of the bank each; every fill gets a take-profit one step higher,
-        so every small bounce books a small profit at maker fees. It earns in ranges and is stopped out in hard sell-offs.</p>
-        <p class="dim small">Replay fast-forwards the last ~2 days of real 1m prices (1 bar every 1.5s) — the same thing the "session replay" dashboards show.
-        It is real price history, so results mean more than the simulator, but it is still a backtest: live trading can't run faster than the market.</p>
-        <p class="dim small">Live fast watches 15 liquid coins on 1-minute candles with a looser gate, so setups come several times more often.
-        Faster candles don't help: a 1-second move is far smaller than exchange fees, so no strategy survives FORGE there.</p>
-      </section>
 ${this.liveCardView()}
       <section class="card form">
-        <h3>Market data</h3>
-        <label>Feed
-          <select data-set="feed">
-            <option value="replay" ${s.feed === 'replay' ? 'selected' : ''}>Replay — last ~2 days of real Binance prices, fast-forwarded</option>
-            <option value="binance" ${s.feed === 'binance' ? 'selected' : ''}>Binance live prices (real time, paper fills)</option>
-            <option value="sim" ${s.feed === 'sim' ? 'selected' : ''}>Simulator (turbo, offline)</option>
-          </select></label>
-        <label>Live candle timeframe
-          <select data-set="interval">
-            <option value="1s" ${s.interval === '1s' ? 'selected' : ''}>1 second (experimental — fees usually exceed moves)</option>
-            <option value="1m" ${s.interval === '1m' ? 'selected' : ''}>1 minute (standard)</option>
-            <option value="5m" ${s.interval === '5m' ? 'selected' : ''}>5 minutes (slow — fewer, larger moves)</option>
-          </select></label>
-        <label>Simulator speed — seconds per 1m bar
-          <input type="number" step="0.5" min="0.5" max="60" data-set="simBarMs" value="${s.simBarMs / 1000}"></label>
-        <label>Markets (comma separated)
-          <input type="text" data-set="symbols" value="${s.symbols.join(',')}"></label>
-      </section>
-      <section class="card form">
-        <h3>Strategy</h3>
-        <label>Engine
-          <select data-set="strategy">
-            <option value="agents" ${s.strategy === 'agents' ? 'selected' : ''}>Directional agents (SCOUT → SENTRY → HAWK)</option>
-            <option value="grid" ${s.strategy === 'grid' ? 'selected' : ''}>Grid micro-trading (a grid on every market)</option>
-          </select></label>
-        <label>Maker fee % (grid fills)
-          <input type="number" step="0.01" min="0" max="1" data-set="grid.maker" value="${pctInput(s.grid.maker)}"></label>
-        <label>Grid leverage (× the bank spread across all grids — multiplies losses too)
-          <input type="number" step="0.5" min="1" max="5" data-set="grid.leverage" value="${s.grid.leverage}"></label>
-        <label>Crash guard (flatten all grids when most markets dump together)
+        <h3>Coin picker <span class="dim">paper simulation FORGE uses to choose coins — not your money</span></h3>
+        <p class="dim small">A $${s.startBalance} play-money grid runs on all ${s.symbols.length} coins on live Binance prices. FORGE re-tunes each coin's grid
+        continuously and only coins that beat fees on unseen data are traded for real.</p>
+        <label>Grid leverage used for picking (match your live leverage)
+          <select data-set="grid.leverage">${[1, 2, 3, 4, 5].map((x) => `<option value="${x}" ${x === s.grid.leverage ? 'selected' : ''}>${x}×</option>`).join('')}</select></label>
+        <label>Crash guard (pause every grid when most coins dump together)
           <select data-set="grid.crashGuard">
-            <option value="0" ${s.grid.crashGuard ? '' : 'selected'}>Off — best on a real week so far</option>
-            <option value="1" ${s.grid.crashGuard ? 'selected' : ''}>On</option>
+            <option value="1" ${s.grid.crashGuard ? 'selected' : ''}>On — recommended</option>
+            <option value="0" ${s.grid.crashGuard ? '' : 'selected'}>Off</option>
           </select></label>
-        <label>Crash guard trigger: drop % over 30 bars on ⅔ of markets
-          <input type="number" step="0.5" min="0.5" max="10" data-set="grid.crashDrop" value="${pctInput(s.grid.crashDrop)}"></label>
+        <label>Maker fee % (your Binance futures maker fee)
+          <input type="number" step="0.01" min="0" max="1" data-set="grid.maker" value="${pctInput(s.grid.maker)}"></label>
         <label>Taker fee % (stop-outs)
           <input type="number" step="0.01" min="0" max="1" data-set="grid.taker" value="${pctInput(s.grid.taker)}"></label>
-      </section>
-      <section class="card form">
-        <h3>HAWK · sizing</h3>
-        <label>Starting balance (USDT, applies on reset)
-          <input type="number" min="10" data-set="startBalance" value="${s.startBalance}"></label>
-        <label>Max risk per trade (% of bank lost at stop)
-          <input type="number" step="0.1" min="0.1" max="10" data-set="hawk.maxRiskPerTrade" value="${pctInput(s.hawk.maxRiskPerTrade)}"></label>
-        <label>Max leverage (notional / equity)
-          <input type="number" step="0.5" min="1" max="10" data-set="hawk.maxLeverage" value="${s.hawk.maxLeverage}"></label>
-      </section>
-      <section class="card form">
-        <h3>SENTRY · gate</h3>
-        <label>Min signal confidence (%)
-          <input type="number" min="0" max="100" data-set="sentry.minConfidence" value="${pctInput(s.sentry.minConfidence)}"></label>
-        <label>Max open positions
-          <input type="number" min="1" max="10" data-set="sentry.maxOpen" value="${s.sentry.maxOpen}"></label>
-        <label>Daily loss limit (% of day-start equity)
-          <input type="number" step="0.5" min="0.5" max="50" data-set="sentry.dailyLossLimit" value="${pctInput(s.sentry.dailyLossLimit)}"></label>
-        <label>Cooldown after a loss (bars)
-          <input type="number" min="0" max="240" data-set="sentry.cooldownBars" value="${s.sentry.cooldownBars}"></label>
-      </section>
-      <section class="card">
-        <h3>Book</h3>
-        <button class="danger" data-act="reset">Reset paper account</button>
-        <p class="dim small">Paper trading only: orders are simulated against real (or simulated) prices. No exchange keys are used or stored.
-        Past or simulated performance says nothing about future results.</p>
+        <button class="danger" data-act="reset">Reset paper simulation</button>
       </section>`;
   }
 
@@ -917,8 +559,6 @@ ${this.liveCardView()}
       else void this.engine.start();
     } else if (el.dataset.act?.startsWith('live-')) {
       void this.liveAction(el.dataset.act);
-    } else if (el.dataset.act === 'mm') {
-      void this.toggleMM();
     } else if (el.dataset.act === 'arena') {
       void this.toggleArena();
     } else if (el.dataset.act === 'flatten') {
@@ -938,17 +578,9 @@ ${this.liveCardView()}
       else if (lk === 'apiKey' || lk === 'apiSecret') l[lk] = v;
       else if (lk === 'dailyLossLimit') l.dailyLossLimit = Math.min(0.5, Math.max(0.01, Number(v) / 100));
       else if (lk === 'maxCapital') l.maxCapital = Math.max(10, Number(v) || 100);
+      else if (lk === 'compound') l.compound = v === '1';
       else l[lk] = Number(v);
       saveLiveSettings(l);
-      return;
-    }
-    const mk = el.dataset.mm;
-    if (mk) {
-      const m = this.mm;
-      if (mk === 'source') m.source = el.value as 'real' | 'sim';
-      if (mk === 'hours') m.hours = Number(el.value);
-      if (mk === 'coins') m.coins = el.value;
-      if (mk === 'fillProb') m.fillProb = Number(el.value);
       return;
     }
     const ak = el.dataset.arena;
@@ -1017,17 +649,6 @@ ${this.liveCardView()}
   private drawCharts() {
     const e = this.engine;
     const q = (id: string) => this.body.querySelector<HTMLCanvasElement>(`#${id}`);
-    const money = (v: number) => `$${v.toLocaleString('en-US', { maximumFractionDigits: v >= 100 ? 0 : 2 })}`;
-    const eqC = q('c-equity');
-    if (eqC) lineChart(eqC, [{ values: [...e.equity.map((p) => p.v), e.totalEquity()], color: '--up', fill: true }], money, e.startBalance);
-
-    const cC = q('c-candles');
-    const s = e.symbols.get(this.symbol);
-    if (cC && s) {
-      const candles = [...s.candles.slice(-119), ...(s.forming ? [s.forming] : [])];
-      candleChart(cC, candles, e.positions.find((p) => p.symbol === this.symbol), e.trades.filter((t) => t.symbol === this.symbol), fmtPrice);
-    }
-
     const gC = q('c-grid');
     const gs = e.symbols.get(this.symbol);
     const gbot = e.grids.get(this.symbol)?.bot;
@@ -1043,23 +664,6 @@ ${this.liveCardView()}
       lineChart(gfC, [{ values: h.map((x) => Math.max(-0.05, x.best)), color: '--up', fill: true }], (v) => `${(v * 100).toFixed(2)}%`, 0);
     }
 
-    const fC = q('c-fitness');
-    if (fC && s) {
-      const h = s.evolver.history.slice(-80);
-      const clampF = (x: number) => Math.max(-0.2, x);
-      lineChart(fC, [
-        { values: h.map((x) => clampF(x.mean)), color: '--muted', width: 1 },
-        { values: h.map((x) => clampF(x.best)), color: '--up', fill: true },
-      ], (v) => v.toFixed(3), 0);
-    }
-
-    const kC = q('c-kelly');
-    const t = s?.evolver.champion?.test;
-    if (kC && t) {
-      const { w, payoff } = edgeStats(t);
-      kellyChart(kC, w, payoff, Math.min(sizedRisk(w, payoff, 1), 0.6));
-    }
-
     const tC = q('c-trades');
     if (tC) {
       const tr = [...e.trades].slice(0, 60).reverse();
@@ -1068,7 +672,6 @@ ${this.liveCardView()}
   }
 }
 
-const DEFAULT_POP = 40;
 const ARENA_COLORS = ['--scout', '--hawk', '--forge', '--warn', '--down'];
 
 const PRESETS: Record<string, Partial<Settings>> = {
@@ -1076,16 +679,6 @@ const PRESETS: Record<string, Partial<Settings>> = {
   live: { feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: DEFAULT_SETTINGS.grid, sentry: { ...DEFAULT_SENTRY } },
   // 5x made money in all four real 15-coin weeks (+9.8% to +23.4%) with deeper drops (14-20%).
   live5: { feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: { ...DEFAULT_SETTINGS.grid, leverage: 5 }, sentry: { ...DEFAULT_SENTRY } },
-  grid: { feed: 'replay', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: DEFAULT_SETTINGS.grid, sentry: { ...DEFAULT_SENTRY } },
-  replay: { feed: 'replay', strategy: 'agents', interval: '1m', sentry: { ...DEFAULT_SENTRY } },
-  fast: {
-    feed: 'binance',
-    strategy: 'agents',
-    interval: '1m',
-    symbols: WIDE_MARKETS,
-    sentry: { ...DEFAULT_SENTRY, minConfidence: 0.4, cooldownBars: 5, maxOpen: 5 },
-  },
-  standard: { feed: 'binance', strategy: 'agents', interval: '1m', symbols: MAJORS, sentry: { ...DEFAULT_SENTRY } },
 };
 
 /** Fraction → percent for a form field, without float noise like 55.00000000000001. */
@@ -1097,19 +690,4 @@ function kpi(label: string, value: string, sub: string): string {
 
 function stat(label: string, value: string): string {
   return `<div><small>${label}</small><b>${value}</b></div>`;
-}
-
-function meter(score: number, pass: boolean): string {
-  const n = 10;
-  const on = Math.round(score * n);
-  return `<span class="meter ${pass ? '' : 'fail'}">${Array.from({ length: n }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('')}</span>`;
-}
-
-function funnel(label: string, value: number, max: number): string {
-  return `<div class="funnel"><span>${label}</span><div class="bar"><i style="width:${Math.min(100, (value / max) * 100)}%"></i></div><b class="mono">${value}</b></div>`;
-}
-
-function stageChip(s: SymbolState): string {
-  const label: Record<string, string> = { idle: 'watching', read: 'reading', gate: 'at gate', veto: s.evolver.champion ? 'vetoed' : 'benched', execute: 'executing', hold: 'in position' };
-  return `<span class="stage ${s.stage}"><b>${short(s.symbol)}</b>${label[s.stage]}</span>`;
 }

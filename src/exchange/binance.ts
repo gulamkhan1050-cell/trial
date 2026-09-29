@@ -237,8 +237,9 @@ export class BinanceFutures implements ExchangeClient {
     await this.signed('DELETE', '/fapi/v1/allOpenOrders', { symbol });
   }
 
-  async openOrders(): Promise<ExOrder[]> {
-    return (await this.signed<RawOrder[]>('GET', '/fapi/v1/openOrders')).map(toOrder);
+  async openOrders(symbol?: string): Promise<ExOrder[]> {
+    // Weight 1 for one symbol, 40 for all of them.
+    return (await this.signed<RawOrder[]>('GET', '/fapi/v1/openOrders', symbol ? { symbol } : {})).map(toOrder);
   }
 
   async order(symbol: string, orderId: number): Promise<ExOrder> {

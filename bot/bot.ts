@@ -49,7 +49,7 @@ async function main() {
     }
   });
 
-  say(`starting · ${s.network.toUpperCase()} · $${s.maxCapital} × ${s.leverage} · up to ${s.maxCoins} coins · loss limit ${(s.dailyLossLimit * 100).toFixed(0)}%`);
+  say(`starting · ${s.network.toUpperCase()} · $${s.maxCapital} × ${s.leverage} · up to ${s.maxCoins} coins · loss limit ${(s.dailyLossLimit * 100).toFixed(0)}% · reinvest ${s.compound ? 'on' : 'off'}`);
   say('downloading 15 coins of 1m history from Binance…');
   await engine.start();
   // Network trouble is worth retrying (run-bot.sh restarts on exit 1); rejected keys are not.
@@ -84,7 +84,7 @@ async function main() {
     const total = live.wallet - live.startWallet + live.unrealized;
     const days = Math.max((Date.now() - live.since) / 86_400_000, 1 / 24);
     say(
-      `TOTAL ${money(total)} (${money(total / days)}/day) · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · ${coins.join('  ') || 'waiting for FORGE'}`,
+      `TOTAL ${money(total)} (${money(total / days)}/day) · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · budget $${live.budget.toFixed(0)} · ${coins.join('  ') || 'waiting for FORGE'}`,
     );
     engine.save();
   }, 60_000);
@@ -127,10 +127,11 @@ async function config(): Promise<LiveSettings> {
     network,
     apiKey: pastedKey || (await ask('Paste the API KEY', '')),
     apiSecret: await ask('Paste the SECRET KEY', ''),
-    maxCapital: +(await ask('Max capital USDT', '100')),
-    leverage: +(await ask('Leverage', '3')),
-    maxCoins: +(await ask('Max coins', '5')),
-    dailyLossLimit: +(await ask('Loss limit (fraction of wallet, 0.1 = 10%)', '0.1')),
+    maxCapital: +(await ask('Max capital USDT (₹25,000 ≈ 300)', String(DEFAULT_LIVE_SETTINGS.maxCapital))),
+    leverage: +(await ask('Leverage', String(DEFAULT_LIVE_SETTINGS.leverage))),
+    maxCoins: +(await ask('Max coins at once', String(DEFAULT_LIVE_SETTINGS.maxCoins))),
+    dailyLossLimit: +(await ask('Loss limit (fraction of wallet, 0.2 = 20%)', String(DEFAULT_LIVE_SETTINGS.dailyLossLimit))),
+    compound: (await ask('Reinvest profit? y/n', 'y')).toLowerCase().startsWith('y'),
   };
   if (network === 'mainnet' && (await ask('REAL MONEY. Type YES to confirm', 'no')) !== 'YES') fail('cancelled');
   rl.close();

@@ -298,6 +298,48 @@ describe('post-only rejections (-5022)', () => {
   });
 });
 
+describe('LiveGrid compounding and speed', () => {
+  it('reinvests profit into new ladders and shrinks them after losses', async () => {
+    const ex = new MockExchange(RULES, 100);
+    let now = 1_000_000;
+    const host: LiveHost = { candidates: () => [{ symbol: 'DOGEUSDT', genome: G, score: 0.05 }], stressed: () => false, log: () => undefined };
+    const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, leverage: 3, maxCoins: 5, compound: true }, Object.keys(RULES), () => now);
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    expect(live.budget).toBe(100);
+    ex.wallet += 40; // profit booked
+    now += 31_000;
+    await live.tick();
+    expect(live.budget).toBeCloseTo(140, 6);
+    expect(live.slice()).toBeCloseTo((140 * 3) / 5, 6); // new ladders are bigger
+    ex.wallet -= 70; // then a loss
+    now += 31_000;
+    await live.tick();
+    expect(live.budget).toBeCloseTo(70, 6);
+  });
+
+  it('keeps a fixed budget when compounding is off', async () => {
+    const { ex, live, advance } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    ex.wallet += 40;
+    advance(31_000);
+    await live.tick();
+    expect(live.budget).toBe(100);
+  });
+
+  it('checks open orders per coin, never with the expensive all-symbols query', async () => {
+    const { ex, live } = setup();
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    ex.calls.length = 0;
+    for (let i = 0; i < 3; i++) await live.tick();
+    const checks = ex.calls.filter((c) => c.startsWith('OPEN-ORDERS'));
+    expect(checks.length).toBeGreaterThan(0);
+    expect(checks.every((c) => c === 'OPEN-ORDERS DOGEUSDT')).toBe(true);
+  });
+});
+
 describe('LiveGrid resume after a restart', () => {
   /** A second session on the same exchange, as after the phone or app restarts. */
   function restart(ex: MockExchange, cands: LiveCandidate[] = []) {

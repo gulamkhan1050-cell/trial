@@ -16,17 +16,24 @@ export interface LiveSettings {
   leverage: number;
   maxCoins: number;
   dailyLossLimit: number;
+  /** Reinvest: the trading budget grows with profit (and shrinks with losses). */
+  compound: boolean;
 }
 
+// The aggressive profile: real-week Arena runs at 5x on 15 coins made +10% to +23% a week, with 14-20% drops.
 export const DEFAULT_LIVE_SETTINGS: LiveSettings = {
   network: 'demo',
   apiKey: '',
   apiSecret: '',
-  maxCapital: 100,
-  leverage: 3,
-  maxCoins: 5,
-  dailyLossLimit: 0.1,
+  maxCapital: 300,
+  leverage: 5,
+  maxCoins: 8,
+  dailyLossLimit: 0.2,
+  compound: true,
 };
+
+/** How often the live grid syncs with the exchange. Per-coin order checks keep this well inside Binance's rate limits. */
+export const LIVE_TICK_MS = 1500;
 
 const KEY = 'swarmdesk:binance';
 
@@ -116,7 +123,7 @@ export class LiveController {
       this.live = new LiveGrid(
         this.makeClient(s),
         this.host(),
-        { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, makerFee: this.engine.settings.grid.maker },
+        { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, compound: s.compound, makerFee: this.engine.settings.grid.maker },
         universe,
       );
       await this.live.start(loadSnapshot(s));
@@ -132,7 +139,7 @@ export class LiveController {
         } else saveSnapshot(s, this.live.snapshot());
         this.message = this.live.lastError;
         this.engine.notify();
-      }, 3000);
+      }, LIVE_TICK_MS);
       void this.live.tick().then(() => this.engine.notify());
     } catch (e) {
       this.status = 'error';

@@ -150,8 +150,9 @@ export class MockExchange implements ExchangeClient {
     for (const [id, s] of this.stops) if (s.symbol === symbol) this.stops.delete(id);
   }
 
-  async openOrders() {
-    return [...this.orders.values()].filter((o) => o.status === 'NEW').map((o) => ({ ...o }));
+  async openOrders(symbol?: string) {
+    this.calls.push(`OPEN-ORDERS ${symbol ?? 'ALL'}`);
+    return [...this.orders.values()].filter((o) => o.status === 'NEW' && (!symbol || o.symbol === symbol)).map((o) => ({ ...o }));
   }
 
   async order(_symbol: string, orderId: number) {

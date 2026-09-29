@@ -33,9 +33,11 @@ export interface LiveConfig {
   dailyLossLimit: number; // fraction of starting wallet; breach = kill switch
   makerFee: number;
   cooldownMs: number; // after a coin is stopped out
+  /** Reinvest: budget = starting budget + profit so far (losses shrink it the same way). */
+  compound: boolean;
 }
 
-export const DEFAULT_LIVE: LiveConfig = { maxCapital: 100, leverage: 3, maxCoins: 5, dailyLossLimit: 0.1, makerFee: 0.0002, cooldownMs: 30 * 60_000 };
+export const DEFAULT_LIVE: LiveConfig = { maxCapital: 100, leverage: 3, maxCoins: 5, dailyLossLimit: 0.1, makerFee: 0.0002, cooldownMs: 30 * 60_000, compound: false };
 
 interface Level {
   lvl: number;
@@ -81,6 +83,8 @@ export class LiveGrid {
   running = false;
   killed = false;
   budget = 0;
+  /** The budget at start, before any profit is reinvested. */
+  baseBudget = 0;
   startWallet = 0;
   wallet = 0;
   available = 0;
@@ -125,6 +129,7 @@ export class LiveGrid {
     // A resumed session already has margin tied up in its own orders and positions.
     this.budget = Math.min(this.cfg.maxCapital, resume?.coins.length ? b.wallet : b.available);
     if (this.budget < 10) throw new Error(`only $${b.available.toFixed(2)} available in the futures wallet`);
+    this.baseBudget = this.budget;
     this.rules = await this.ex.rules(this.universe);
     if (resume) this.restore(resume);
     await this.ex.ensureOneWay().catch(async (e) => {
@@ -184,7 +189,7 @@ export class LiveGrid {
       let pos = await this.ex.position(c.symbol);
       if (pos.qty < held * 0.5) {
         // A take-profit may simply have filled since the sync: re-check the orders before judging.
-        await this.sync(c, new Set((await this.ex.openOrders()).map((o) => o.orderId)));
+        await this.sync(c, new Set((await this.ex.openOrders(c.symbol)).map((o) => o.orderId)));
         pos = await this.ex.position(c.symbol);
       }
       if (pos.qty < inventory(c) * 0.5) {
@@ -238,6 +243,11 @@ export class LiveGrid {
         let open = 0;
         for (const c of this.coins.values()) if (inventory(c) > 0) open += (await this.ex.position(c.symbol)).unrealized;
         this.unrealized = open;
+        if (this.cfg.compound) {
+          // New ladders are sized from the grown (or shrunk) budget; running ones keep their size.
+          const equity = this.wallet + open;
+          this.budget = Math.max(10, Math.min(this.baseBudget + (equity - this.startWallet), equity));
+        }
         // Judge the loss limit on equity (wallet + held coins), so a deep dip counts before it is sold.
         if (this.wallet + open < this.startWallet * (1 - this.cfg.dailyLossLimit)) {
           this.busy = false;
@@ -246,7 +256,9 @@ export class LiveGrid {
         }
       }
       this.px = await this.ex.prices();
-      const open = new Set((await this.ex.openOrders()).map((o) => o.orderId));
+      // One cheap per-coin query each instead of the all-symbols one, so the loop can run every ~1.5 s.
+      const lists = await Promise.all([...this.coins.keys()].map((sym) => this.ex.openOrders(sym)));
+      const open = new Set(lists.flat().map((o) => o.orderId));
       for (const c of this.coins.values()) await this.sync(c, open);
       if (this.reconcilePending) {
         await this.reconcile();
@@ -273,8 +285,8 @@ export class LiveGrid {
           await this.flatten(c, 'FORGE retired its grid (flat)');
           continue;
         }
-        // Trail the ladder up when flat and price has left it behind (at most once a minute).
-        if (!holding && px > c.center * (1 + c.genome.spacing) && this.now() - c.lastTrail > 60_000) {
+        // Trail the ladder up when flat and price has left it behind (at most every 20 s).
+        if (!holding && px > c.center * (1 + c.genome.spacing) && this.now() - c.lastTrail > 20_000) {
           await this.ex.cancelAll(c.symbol);
           this.lay(c, champ?.genome ?? c.genome, px);
           c.lastTrail = this.now();
