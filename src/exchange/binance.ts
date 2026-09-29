@@ -37,6 +37,7 @@ export class BinanceFutures implements ExchangeClient {
   readonly name: string;
   private base: string;
   private offset: number | null = null; // server time − local time
+  private syncedAt = 0;
   private key: CryptoKey | null = null;
   private rulesCache: Record<string, SymbolRules> = {};
   private seq = 0;
@@ -61,7 +62,19 @@ export class BinanceFutures implements ExchangeClient {
   }
 
   private async signed<T>(method: 'GET' | 'POST' | 'DELETE', path: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
-    if (this.offset === null) await this.syncTime();
+    // PCs and phones drift by seconds a day: re-sync with Binance's clock every 10 minutes, and at once on
+    // -1021 ("timestamp ahead of/behind server time"), retrying that request.
+    if (this.offset === null || Date.now() - this.syncedAt > 10 * 60_000) await this.syncTime();
+    try {
+      return await this.signedOnce<T>(method, path, params);
+    } catch (e) {
+      if (!(e instanceof BinanceError && e.code === -1021)) throw e;
+      await this.syncTime();
+      return this.signedOnce<T>(method, path, params);
+    }
+  }
+
+  private async signedOnce<T>(method: 'GET' | 'POST' | 'DELETE', path: string, params: Record<string, string | number | boolean>): Promise<T> {
     const q = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
     q.set('recvWindow', '5000');
     q.set('timestamp', String(Date.now() + (this.offset ?? 0)));
@@ -94,6 +107,7 @@ export class BinanceFutures implements ExchangeClient {
     const t0 = Date.now();
     const r = await this.public<{ serverTime: number }>('/fapi/v1/time');
     this.offset = r.serverTime - Math.round((t0 + Date.now()) / 2);
+    this.syncedAt = Date.now();
   }
 
   // ------------------------------------------------------------ account

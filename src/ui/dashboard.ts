@@ -155,9 +155,17 @@ export class Dashboard {
     const net = eq - e.startBalance;
     const wins = e.trades.filter((t) => t.pnl > 0).length;
     const f = e.forgeTotals();
+    const lv = this.liveCtl?.live;
+    const liveTotal = lv ? lv.wallet - lv.startWallet + lv.unrealized : 0;
     return `
+      ${
+        lv
+          ? `<p class="small"><b>Binance account:</b> <span class="${cls(liveTotal)}">${signed(liveTotal)}</span> total · see the Grid tab.
+             <span class="dim">The numbers below are the paper simulation ($1,000 play money), not your Binance money.</span></p>`
+          : ''
+      }
       <section class="kpis">
-        ${kpi('Session balance', usd(eq), `start ${usd(e.startBalance)}`)}
+        ${kpi(lv ? 'Paper balance' : 'Session balance', usd(eq), `start ${usd(e.startBalance)}`)}
         ${kpi('Net PnL', `<span class="${cls(net)}">${signed(net)}</span>`, `<span class="${cls(net)}">${pct(net / e.startBalance, 2)}</span> · day ${signed(e.dayPnl)}`)}
         ${kpi('Win rate', pct(e.winRate()), `${wins}W / ${e.trades.length - wins}L`)}
         ${kpi('In position', String(e.positions.length), `open ${signed(e.openPnl())}`)}
@@ -286,7 +294,7 @@ export class Dashboard {
     return `
       ${this.livePanelView()}
       <section class="kpis">
-        ${kpi('Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${tot.roundTrips} round trips · all markets`)}
+        ${kpi(this.liveCtl?.live ? 'Paper grid profit' : 'Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${tot.roundTrips} round trips · all markets`)}
         ${kpi('Ladders armed', `${tot.armed}/${tot.markets}`, `${tot.holding} holding · ${e.settings.grid.leverage}× leverage`)}
         ${kpi('Inventory', usd(tot.inventory), `open ${signed(open)}`)}
         ${kpi('Fees', `${(e.settings.grid.maker * 200).toFixed(2)}%`, 'maker, per round trip')}
@@ -377,6 +385,8 @@ export class Dashboard {
     const lv = this.liveCtl?.live;
     if (!lv || !this.liveCtl) return '';
     const pnl = lv.wallet - lv.startWallet;
+    const total = pnl + lv.unrealized;
+    const days = Math.max((Date.now() - lv.since) / 86_400_000, 1 / 24);
     const coins = [...lv.coins.values()]
       .map((c) => {
         const held = c.levels.filter((l) => l.side === 'sell').length;
@@ -387,13 +397,14 @@ export class Dashboard {
       <section class="card live-card">
         <h3>Live account · Binance ${esc(this.liveCtl.network)} <span class="dim">${esc(this.liveCtl.status)}</span></h3>
         <div class="stats">
-          ${stat('Wallet', usd(lv.wallet))}
-          ${stat('Since start', `<span class="${cls(pnl)}">${signed(pnl)}</span>`)}
-          ${stat('Round trips', String(lv.roundTrips))}
-          ${stat('Booked (own fills)', signed(lv.realized))}
-          ${stat('Budget', `${usd(lv.budget)} × ${lv.cfg.leverage}`)}
-          ${stat('Coins', `${lv.coins.size}/${lv.cfg.maxCoins}`)}
+          ${stat('TOTAL result', `<span class="${cls(total)}">${signed(total)}</span> <span class="dim small">${pct(total / lv.budget, 1)} of $${lv.budget.toFixed(0)}</span>`)}
+          ${stat('Per day', `<span class="${cls(total)}">${signed(total / days)}</span> <span class="dim small">over ${days < 1 ? `${(days * 24).toFixed(1)} h` : `${days.toFixed(1)} days`}</span>`)}
+          ${stat('Wallet', `${usd(lv.wallet)} <span class="dim small">${signed(pnl)} realized</span>`)}
+          ${stat('Held coins now', `<span class="${cls(lv.unrealized)}">${signed(lv.unrealized)}</span>`)}
+          ${stat('Round trips', `${lv.roundTrips} <span class="dim small">booked ${signed(lv.realized)}</span>`)}
+          ${stat('Budget · coins', `${usd(lv.budget)} × ${lv.cfg.leverage} · ${lv.coins.size}/${lv.cfg.maxCoins}`)}
         </div>
+        <p class="dim small">This box is your Binance account. Everything below it is the paper simulation ($1,000 of play money on all 15 coins) that FORGE uses to pick coins — not your money.</p>
         <div class="stages">${coins || '<span class="dim small">waiting for FORGE to approve coins…</span>'}</div>
         ${lv.lastError ? `<p class="down small">${esc(lv.lastError)}</p>` : ''}
         <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>

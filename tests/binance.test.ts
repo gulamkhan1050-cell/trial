@@ -51,6 +51,24 @@ describe('Binance futures client', () => {
     await expect(client.balance()).rejects.toBeInstanceOf(BinanceError);
   });
 
+  it('re-syncs the clock and retries once when Binance says the timestamp is off (-1021)', async () => {
+    let timeCalls = 0;
+    let balanceCalls = 0;
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.includes('/time')) {
+        timeCalls++;
+        return new Response(JSON.stringify({ serverTime: Date.now() }));
+      }
+      balanceCalls++;
+      return balanceCalls === 1
+        ? new Response(JSON.stringify({ code: -1021, msg: 'Timestamp for this request was 1000ms ahead of the server time.' }), { status: 400 })
+        : new Response(JSON.stringify([{ asset: 'USDT', balance: '100', availableBalance: '90' }]));
+    });
+    const b = await new BinanceFutures('k', 's', 'demo', 'https://fapi.test').balance();
+    expect(b).toEqual({ wallet: 100, available: 90 });
+    expect(timeCalls).toBe(2);
+  });
+
   it('treats "already isolated" as success when setting up a symbol', async () => {
     const paths: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {

@@ -81,15 +81,10 @@ async function main() {
     const coins = [...live.coins.values()].map((c) => `${c.symbol.replace('USDT', '')} ${c.levels.filter((l) => l.side === 'sell').length}/${c.levels.length}`);
     // The wallet only moves when Binance realizes profit — against the position's AVERAGE entry — so
     // it lags the grid's own per-level booking. Wallet + open-position value is the true result.
-    let open = 0;
-    try {
-      for (const c of live.coins.values()) open += (await live.ex.position(c.symbol)).unrealized;
-    } catch {
-      open = NaN;
-    }
-    const total = live.wallet - live.startWallet + open;
+    const total = live.wallet - live.startWallet + live.unrealized;
+    const days = Math.max((Date.now() - live.since) / 86_400_000, 1 / 24);
     say(
-      `wallet $${live.wallet.toFixed(2)} · open ${Number.isNaN(open) ? '?' : money(open)} · TOTAL ${Number.isNaN(total) ? '?' : money(total)} · round trips ${live.roundTrips} · booked ${money(live.realized)} · ${coins.join('  ') || 'waiting for FORGE'}`,
+      `TOTAL ${money(total)} (${money(total / days)}/day) · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · ${coins.join('  ') || 'waiting for FORGE'}`,
     );
     engine.save();
   }, 60_000);

@@ -68,6 +68,7 @@ export interface LiveSnapshot {
   startWallet: number;
   roundTrips: number;
   realized: number;
+  since?: number;
   coins: LiveCoin[];
   cooldown: [string, number][];
 }
@@ -85,6 +86,10 @@ export class LiveGrid {
   available = 0;
   roundTrips = 0;
   realized = 0; // booked from our own fills (the wallet is the final truth)
+  /** Profit/loss of the coins held right now (Binance's mark price); wallet change + this = true result. */
+  unrealized = 0;
+  /** When this run began (kept across resumes), for a per-day rate. */
+  since = 0;
   lastError = '';
   /** How many coins were picked back up from a saved snapshot at start. */
   resumed = 0;
@@ -134,6 +139,7 @@ export class LiveGrid {
     this.killed = false;
     this.lastBalance = this.now();
     this.startedAt = this.now();
+    this.since ||= this.now();
     this.host.log('info', `LIVE ${this.ex.name}: wallet $${b.wallet.toFixed(2)} · budget $${this.budget.toFixed(2)} · ${this.cfg.leverage}× · up to ${this.cfg.maxCoins} coins`);
     if (this.resumed) this.host.log('info', `LIVE resumed ${this.resumed} coin(s) from the last session — their orders and positions were kept`);
   }
@@ -145,6 +151,7 @@ export class LiveGrid {
       startWallet: this.startWallet,
       roundTrips: this.roundTrips,
       realized: this.realized,
+      since: this.since,
       coins: [...this.coins.values()],
       cooldown: [...this.cooldown],
     };
@@ -155,6 +162,7 @@ export class LiveGrid {
     this.startWallet = s.startWallet || this.startWallet;
     this.roundTrips = s.roundTrips ?? 0;
     this.realized = s.realized ?? 0;
+    this.since = s.since ?? s.savedAt ?? 0;
     this.cooldown = new Map(s.cooldown ?? []);
     for (const c of s.coins ?? []) {
       if (!this.rules[c.symbol] || !c.levels?.length) continue;
@@ -227,9 +235,13 @@ export class LiveGrid {
         this.wallet = b.wallet;
         this.available = b.available;
         this.lastBalance = this.now();
-        if (this.wallet < this.startWallet * (1 - this.cfg.dailyLossLimit)) {
+        let open = 0;
+        for (const c of this.coins.values()) if (inventory(c) > 0) open += (await this.ex.position(c.symbol)).unrealized;
+        this.unrealized = open;
+        // Judge the loss limit on equity (wallet + held coins), so a deep dip counts before it is sold.
+        if (this.wallet + open < this.startWallet * (1 - this.cfg.dailyLossLimit)) {
           this.busy = false;
-          await this.kill(`loss limit: wallet $${this.wallet.toFixed(2)} vs start $${this.startWallet.toFixed(2)}`);
+          await this.kill(`loss limit: equity $${(this.wallet + open).toFixed(2)} vs start $${this.startWallet.toFixed(2)}`);
           return;
         }
       }
