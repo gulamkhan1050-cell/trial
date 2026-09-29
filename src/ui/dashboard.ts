@@ -316,8 +316,9 @@ export class Dashboard {
     const s = this.liveSettings;
     try {
       if (act === 'live-zero') {
-        if (!confirm('Start counting from zero now? Orders and coins stay as they are — only the TOTAL, per-day and round-trip counters restart.')) return;
+        if (!confirm('Start counting from zero now? Orders and coins stay as they are — the live TOTAL, per-day and round trips, and the paper profit and trades, all restart at 0.')) return;
         c.resetStats();
+        this.engine.resetCounters();
         this.renderTab(true);
       } else if (act === 'live-aggressive') {
         // Real-week Arena: 5x made +10% to +23% a week on 15 coins, with drops of 14-20% along the way.

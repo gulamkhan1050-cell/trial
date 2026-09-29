@@ -37,3 +37,14 @@ describe('saved settings', () => {
     expect(s.symbols).toHaveLength(15);
   });
 });
+
+describe('Engine.resetCounters', () => {
+  it('zeroes the paper scores without stopping or re-seeding anything', () => {
+    const e = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', symbols: ['BTCUSDT'] }, 1);
+    e.trades.push({ symbol: 'BTCUSDT', dir: 1, entry: 1, exit: 2, qty: 1, pnl: 5, openedAt: 0, closedAt: 1, reason: 'x' } as never);
+    e.balance += 5;
+    e.resetCounters();
+    expect(e.trades).toHaveLength(0);
+    expect(e.totalEquity() - e.startBalance).toBe(0);
+  });
+});

@@ -260,6 +260,24 @@ export class Engine {
     this.emit();
   }
 
+  /**
+   * Count the paper book from zero now without restarting anything: FORGE's grids, ladders and held
+   * paper inventory carry on (so the live trader's coin picks are undisturbed); only the scores restart.
+   */
+  resetCounters() {
+    this.startBalance = this.totalEquity();
+    this.trades = [];
+    this.tradeCount = 0;
+    this.winCount = 0;
+    this.vetoes = 0;
+    this.equity = [{ t: Date.now(), v: this.startBalance }];
+    this.dayStartEquity = this.startBalance;
+    this.dayPnl = 0;
+    for (const g of this.grids.values()) g.roundTrips = 0;
+    this.save();
+    this.emit();
+  }
+
   updateSettings(patch: Partial<Settings>) {
     // Leaving a live book's strategy or markets: flatten at today's real prices first, so no
     // position or grid inventory is left behind unmanaged. (Sim/replay books restart fresh anyway.)
