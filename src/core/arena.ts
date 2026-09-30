@@ -141,7 +141,8 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   // Grid contestants that differ only in leverage or crash guard share one FORGE per market:
   // they then trade identical ladders, so the comparison isolates what actually differs — and
   // the search (most of the Arena's CPU) runs once instead of once per contestant.
-  const feeKey = (e: Engine) => `${e.settings.grid.maker}/${e.settings.grid.taker}`;
+  // Grids that share fees and take-profit rules can share one FORGE (fast mode); old-vs-new must not.
+  const feeKey = (e: Engine) => `${e.settings.grid.maker}/${e.settings.grid.taker}/${e.settings.grid.classicTp ? 'classic' : 'smart'}`;
   const leaders = new Map<string, Engine>();
   const followerOf = new Map<Engine, Engine>();
   for (const e of engines) {
@@ -246,11 +247,11 @@ export function gridVariants(base: Settings): Contestant[] {
   const g = base.grid;
   const loose = { crashDrop: 0.025, crashBars: 30, crashShare: 0.67 };
   return [
-    { name: 'NORMAL · directional', patch: { strategy: 'agents' } },
-    { name: 'MICRO 1× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 1, crashGuard: false } } },
-    { name: 'MICRO 3× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false } } },
-    { name: 'MICRO 3× · loose guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose } } },
-    { name: 'MICRO 5× · no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: false } } },
+    // Old vs new take-profit on identical prices, same leverage, same stops.
+    { name: 'OLD · 5× classic 1-step take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: true } } },
+    { name: 'NEW · 5× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: false } } },
+    { name: 'NEW · 3× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false } } },
+    { name: 'NEW · 5× smart, no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: false, classicTp: false } } },
   ];
 }
 

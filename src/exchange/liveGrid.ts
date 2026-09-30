@@ -1,4 +1,4 @@
-import type { GridGenome } from '../core/grid';
+import { type GridGenome, takeProfitSteps } from '../core/grid';
 import type { LogEntry } from '../core/types';
 import { BinanceError } from './binance';
 import { BOT_TAG, type ExchangeClient, type ExOrder, roundDown, roundTo, type SymbolRules } from './types';
@@ -386,7 +386,7 @@ export class LiveGrid {
         l.side = 'sell';
         l.buyPrice = px;
         l.qty = filled;
-        l.price = roundTo(px * (1 + c.genome.spacing), c.rules.tickSize);
+        l.price = roundTo(px * (1 + c.genome.spacing * takeProfitSteps(c.genome, l.lvl)), c.rules.tickSize);
         this.host.log('entry', `LIVE BUY ${c.symbol} ${filled} @ ${px}`);
       } else {
         const buy = l.buyPrice ?? l.basePrice;

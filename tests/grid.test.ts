@@ -119,3 +119,41 @@ describe('GRID stability on calm, BTC-like replay', () => {
     expect(e.gridTotals().roundTrips).toBeGreaterThan(10);
   }, 120_000);
 });
+
+describe('smart take-profit', () => {
+  it('sells tp steps above the buy, more for deeper levels, with the same order size and stop', async () => {
+    const { GridBot, takeProfitSteps } = await import('../src/core/grid');
+    const classic = new GridBot({ id: 'c', spacing: 0.01, levels: 3, stop: 0.02 });
+    const smart = new GridBot({ id: 's', spacing: 0.01, levels: 3, stop: 0.02, tp: 2, deep: 0.5 });
+    classic.arm(100, 300);
+    smart.arm(100, 300);
+    expect(smart.orders.map((o) => o.qty)).toEqual(classic.orders.map((o) => o.qty));
+    expect(smart.stopPrice()).toBe(classic.stopPrice());
+    classic.move(100, 96.5);
+    smart.move(100, 96.5);
+    // L1 bought at 99: classic sells at 99 × 1.01, smart at 99 × 1.02; L3 (97) sells at 97 × 1.03.
+    expect(classic.orders[0].price).toBeCloseTo(99.99, 6);
+    expect(smart.orders[0].price).toBeCloseTo(100.98, 6);
+    expect(takeProfitSteps(smart.genome, 3)).toBe(3);
+    expect(smart.orders[2].price).toBeCloseTo(97 * 1.03, 6);
+    // One bounce to 101: both sell L1; the smart one earns about twice as much on it.
+    const c = classic.move(96.5, 101).filter((f) => f.kind === 'sell');
+    const s = smart.move(96.5, 101).filter((f) => f.kind === 'sell');
+    const cL1 = c.find((f) => f.roundTrip!.buy === 99)!.roundTrip!.pnl;
+    const sL1 = s.find((f) => f.roundTrip!.buy === 99)!.roundTrip!.pnl;
+    expect(sL1).toBeGreaterThan(cL1 * 1.9);
+  });
+
+  it('FORGE with classicTp never breeds a smart take-profit', async () => {
+    const { newGridForge, stepGridForge } = await import('../src/core/grid');
+    const { mulberry32 } = await import('../src/core/rng');
+    const rand = mulberry32(7);
+    const candles = Array.from({ length: 700 }, (_, i) => {
+      const c = 100 * (1 + 0.01 * Math.sin(i / 9));
+      return { t: i * 60_000, o: c, h: c * 1.002, l: c * 0.998, c, v: 1 };
+    });
+    let f = newGridForge(rand, { classicTp: true });
+    for (let i = 0; i < 3; i++) f = stepGridForge(f, candles, { maker: 0.0002, taker: 0.0005 }, rand, { classicTp: true });
+    expect(f.population.every((g) => (g.tp ?? 1) === 1 && (g.deep ?? 0) === 0)).toBe(true);
+  });
+});

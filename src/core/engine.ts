@@ -4,7 +4,7 @@ import { DEFAULT_HAWK, type HawkConfig, manage, plan, unrealized } from '../agen
 import { PaperBroker } from './broker';
 import { DEFAULT_EVOLVER, type EvolverState, newEvolver, type Scored, step } from './evolver';
 import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, ReplayFeed, SimFeed } from './market';
-import { DEFAULT_GRID_FEES, type GridFill, type GridForge, GridBot, type GridState, gridSafe, newGridForge, stepGridForge } from './grid';
+import { DEFAULT_GRID_FEES, type GridFill, type GridForge, GridBot, type GridGenome, type GridState, gridSafe, newGridForge, stepGridForge } from './grid';
 
 export interface GridSlot {
   symbol: string;
@@ -18,8 +18,8 @@ export interface GridSlot {
   why: string; // SENTRY's reason for not arming, if any
 }
 
-function newSlot(symbol: string, rand: () => number): GridSlot {
-  return { symbol, forge: newGridForge(rand), bot: null, roundTrips: 0, last: 0, wait: 0, orphan: 0, trails: 0, why: '' };
+function newSlot(symbol: string, rand: () => number, classicTp = false): GridSlot {
+  return { symbol, forge: newGridForge(rand, { classicTp }), bot: null, roundTrips: 0, last: 0, wait: 0, orphan: 0, trails: 0, why: '' };
 }
 import { mulberry32, uid } from './rng';
 import type { AgentId, Broker, Candle, LogEntry, Position, Signal, Trade } from './types';
@@ -45,6 +45,8 @@ export interface Settings {
     crashDrop: number; // a market counts as dumping if it fell this fraction…
     crashBars: number; // …over this many bars
     crashShare: number; // guard fires when at least this share of markets are dumping
+    /** Pin grids to the old one-step take-profit (A/B baseline); off = FORGE may evolve a smart take-profit. */
+    classicTp?: boolean;
   };
   sentry: SentryConfig;
   hawk: HawkConfig;
@@ -187,7 +189,7 @@ export class Engine {
     const kept = this.grids;
     this.grids = new Map();
     for (const sym of this.settings.symbols) {
-      this.grids.set(sym, { ...newSlot(sym, this.rand), bot: kept.get(sym)?.bot ?? null, roundTrips: kept.get(sym)?.roundTrips ?? 0 });
+      this.grids.set(sym, { ...newSlot(sym, this.rand, this.settings.grid.classicTp), bot: kept.get(sym)?.bot ?? null, roundTrips: kept.get(sym)?.roundTrips ?? 0 });
     }
     this.symbols.clear();
     for (const s of this.settings.symbols) {
@@ -807,14 +809,14 @@ export class Engine {
     const before = g.forge.champion?.genome.id;
     const t0 = performance.now();
     this.agents.FORGE = { busy: true, text: `grid gen ${g.forge.generation + 1} · ${short(g.symbol)}`, at: Date.now() };
-    g.forge = stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand);
+    g.forge = stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand, { classicTp: this.settings.grid.classicTp });
     const f = g.forge;
     const c = f.champion;
     if (c && c.genome.id !== before) {
       this.say(
         'FORGE',
         'evolve',
-        `${g.symbol} grid champion: step ${(c.genome.spacing * 100).toFixed(2)}% × ${c.genome.levels} · OOS ${(c.test.profit * 100).toFixed(2)}% · ${c.test.roundTrips} round trips`,
+        `${g.symbol} grid champion: step ${(c.genome.spacing * 100).toFixed(2)}% × ${c.genome.levels} · take-profit ${tpLabel(c.genome)} · OOS ${(c.test.profit * 100).toFixed(2)}% · ${c.test.roundTrips} round trips`,
       );
     } else if (!c && before) {
       this.say('FORGE', 'warn', `${g.symbol} grid champion failed re-validation — retired`);
@@ -887,7 +889,7 @@ export class Engine {
       dayPnl: d.dayPnl ?? 0,
     });
     this.grids = new Map(
-      Object.entries(d.grids ?? {}).map(([sym, x]) => [sym, { ...newSlot(sym, this.rand), bot: GridBot.restore(x.bot, this.gridFees()), roundTrips: x.roundTrips }]),
+      Object.entries(d.grids ?? {}).map(([sym, x]) => [sym, { ...newSlot(sym, this.rand, this.settings.grid.classicTp), bot: GridBot.restore(x.bot, this.gridFees()), roundTrips: x.roundTrips }]),
     );
   }
 
@@ -961,4 +963,11 @@ const short = (s: string) => s.replace('USDT', '');
 
 function fmtQty(x: number): string {
   return x >= 1 ? x.toFixed(3) : x.toPrecision(3);
+}
+
+/** "1 step" for the classic grid, "1.8 steps +0.3/level" for a smart take-profit. */
+export function tpLabel(g: GridGenome): string {
+  const tp = g.tp ?? 1;
+  const deep = g.deep ?? 0;
+  return `${tp.toFixed(1)} step${tp === 1 ? '' : 's'}${deep > 0 ? ` +${deep.toFixed(2)}/level` : ''}`;
 }

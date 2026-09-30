@@ -1,5 +1,5 @@
 import { DEFAULT_SENTRY } from '../agents/sentry';
-import { DEFAULT_SETTINGS, MAJORS, MEGA_MARKETS, WIDE_MARKETS, type Engine, fmtPrice, type Settings } from '../core/engine';
+import { DEFAULT_SETTINGS, MAJORS, MEGA_MARKETS, WIDE_MARKETS, type Engine, fmtPrice, type Settings, tpLabel } from '../core/engine';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, lineChart } from './charts';
 import { type LiveController, type LiveSettings, loadLiveSettings, saveLiveSettings } from '../exchange/liveController';
@@ -213,6 +213,7 @@ export class Dashboard {
                   ${stat('Step', `${(c.genome.spacing * 100).toFixed(2)}%`)}
                   ${stat('Levels', String(c.genome.levels))}
                   ${stat('Stop', `${(c.genome.stop * 100).toFixed(1)}%`)}
+                  ${stat('Take-profit', tpLabel(c.genome))}
                   ${stat('OOS profit', pct(c.test.profit, 2))}
                   ${stat('OOS trips', String(c.test.roundTrips))}
                   ${stat('Max DD', pct(c.test.maxDrawdown, 2))}
@@ -366,9 +367,9 @@ export class Dashboard {
     const opt = (v: string | number, cur: string | number, label: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     return `
       <section class="card form">
-        <h3>Arena <span class="dim">same prices, both strategies, full speed</span></h3>
-        <p class="dim small">Replays a past stretch of market bar by bar through NORMAL (directional agents) and MICRO (a grid on every market),
-        each with its own $${this.engine.settings.startBalance} paper account, and shows what each would have made.</p>
+        <h3>Arena <span class="dim">same real prices, every contestant, full speed</span></h3>
+        <p class="dim small">Replays a past stretch of real market bar by bar. With the grid variants it races the OLD one-step take-profit
+        against the NEW smart take-profit (same leverage, same order sizes, same stops), each with its own $${this.engine.settings.startBalance} paper account.</p>
         <div class="arena-controls">
           <label>Prices
             <select data-arena="source">${opt('real', a.source, 'Real Binance history')}${opt('sim', a.source, 'Offline simulator')}</select></label>
@@ -377,7 +378,7 @@ export class Dashboard {
           <label>Markets
             <select data-arena="markets">${opt(6, a.markets, '6 majors')}${opt(15, a.markets, '15 coins')}${opt(30, a.markets, '30 coins (slower)')}</select></label>
           <label>Contestants
-            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'Normal + 4 grid variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
+            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'OLD vs NEW take-profit + variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
           <label>FORGE mode
             <select data-arena="thorough">${opt('1', a.thorough ? '1' : '0', 'Thorough — re-tune hourly, like live (slower)')}${opt('0', a.thorough ? '1' : '0', 'Fast — shared, re-tune every 3h')}</select></label>
           <label>Grid leverage (Normal vs Micro)

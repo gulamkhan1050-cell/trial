@@ -13,6 +13,24 @@ export interface GridGenome {
   spacing: number; // step between levels as a fraction (0.002 = 0.2%)
   levels: number; // number of buy levels under the price
   stop: number; // liquidate if price falls this far below the lowest level
+  /** Take-profit distance in steps for the first level (1 = the classic one step up). */
+  tp?: number;
+  /** Extra take-profit steps per level deeper: buys low in a dip wait for a bigger bounce. */
+  deep?: number;
+}
+
+/**
+ * How many steps above its buy a level sells. Order size and the stop are untouched, so a larger
+ * take-profit only changes how much each round trip earns — FORGE keeps it only if that wins out
+ * of sample (holding longer also means fewer round trips).
+ */
+export function takeProfitSteps(g: GridGenome, lvl: number): number {
+  return (g.tp ?? 1) + (g.deep ?? 0) * (lvl - 1);
+}
+
+/** FORGE options: `classicTp` pins every grid to the old one-step take-profit (for A/B tests). */
+export interface GridForgeOptions {
+  classicTp?: boolean;
 }
 
 export interface GridFees {
@@ -131,7 +149,7 @@ export class GridBot {
         fills.push({ kind: 'buy', price: o.price, qty: o.qty, fee, cash: -fee });
         o.side = 'sell';
         o.buyPrice = o.price;
-        o.price = o.price * (1 + g.spacing);
+        o.price = o.price * (1 + g.spacing * takeProfitSteps(g, o.lvl));
       }
       if (b <= this.stopPrice()) fills.push(this.liquidate(b));
     } else {
@@ -254,35 +272,49 @@ export interface GridForge {
   history: { gen: number; best: number; mean: number; passed: number }[];
 }
 
-const RANGES = { spacing: [0.0008, 0.012], levels: [3, 16], stop: [0.004, 0.05] } as const;
+const RANGES = { spacing: [0.0008, 0.012], levels: [3, 16], stop: [0.004, 0.05], tp: [1, 3], deep: [0, 0.6] } as const;
 const POP = 30;
 
 function clampG(g: GridGenome): GridGenome {
   g.spacing = Math.round(Math.max(RANGES.spacing[0], Math.min(RANGES.spacing[1], g.spacing)) * 1e5) / 1e5;
   g.levels = Math.round(Math.max(RANGES.levels[0], Math.min(RANGES.levels[1], g.levels)));
   g.stop = Math.round(Math.max(RANGES.stop[0], Math.min(RANGES.stop[1], g.stop)) * 1e4) / 1e4;
+  g.tp = Math.round(Math.max(RANGES.tp[0], Math.min(RANGES.tp[1], g.tp ?? 1)) * 100) / 100;
+  g.deep = Math.round(Math.max(RANGES.deep[0], Math.min(RANGES.deep[1], g.deep ?? 0)) * 100) / 100;
   return g;
 }
 
-export function randomGridGenome(rand: () => number): GridGenome {
+export function randomGridGenome(rand: () => number, opt: GridForgeOptions = {}): GridGenome {
   const pick = (r: readonly [number, number]) => r[0] + rand() * (r[1] - r[0]);
   // Spacing is sampled log-uniformly: tight and wide grids are equally likely.
   const spacing = Math.exp(Math.log(RANGES.spacing[0]) + rand() * Math.log(RANGES.spacing[1] / RANGES.spacing[0]));
-  return clampG({ id: uid('G'), spacing, levels: pick(RANGES.levels), stop: pick(RANGES.stop) });
+  // Half the random grids start with the classic one-step take-profit, half with a smart one.
+  const smart = !opt.classicTp && rand() < 0.5;
+  return clampG({ id: uid('G'), spacing, levels: pick(RANGES.levels), stop: pick(RANGES.stop), tp: smart ? pick(RANGES.tp) : 1, deep: smart ? pick(RANGES.deep) : 0 });
 }
 
-function mutateGrid(a: GridGenome, b: GridGenome, rand: () => number): GridGenome {
+function pinClassic(g: GridGenome, opt: GridForgeOptions): GridGenome {
+  if (opt.classicTp) {
+    g.tp = 1;
+    g.deep = 0;
+  }
+  return g;
+}
+
+function mutateGrid(a: GridGenome, b: GridGenome, rand: () => number, opt: GridForgeOptions = {}): GridGenome {
   const g: GridGenome = {
     id: uid('G'),
     spacing: (rand() < 0.5 ? a : b).spacing * Math.exp(gauss(rand) * 0.15),
     levels: (rand() < 0.5 ? a : b).levels + Math.round(gauss(rand) * 1.2),
     stop: (rand() < 0.5 ? a : b).stop * Math.exp(gauss(rand) * 0.15),
+    tp: ((rand() < 0.5 ? a : b).tp ?? 1) + gauss(rand) * 0.2,
+    deep: ((rand() < 0.5 ? a : b).deep ?? 0) + gauss(rand) * 0.05,
   };
-  return clampG(g);
+  return pinClassic(clampG(g), opt);
 }
 
-export function newGridForge(rand: () => number): GridForge {
-  return { generation: 0, population: Array.from({ length: POP }, () => randomGridGenome(rand)), tested: 0, killed: 0, champion: null, history: [] };
+export function newGridForge(rand: () => number, opt: GridForgeOptions = {}): GridForge {
+  return { generation: 0, population: Array.from({ length: POP }, () => randomGridGenome(rand, opt)), tested: 0, killed: 0, champion: null, history: [] };
 }
 
 export function scoreGrid(g: GridGenome, candles: Candle[], fees: GridFees): GridScored {
@@ -298,8 +330,9 @@ export function gridPasses(s: GridScored, slack = 0): boolean {
 
 const rankOf = (s: GridScored) => (s.train.fitness < 0 || s.test.fitness < 0 ? Math.min(s.train.fitness, s.test.fitness) : 0.4 * s.train.fitness + 0.6 * s.test.fitness);
 
-export function stepGridForge(f: GridForge, candles: Candle[], fees: GridFees, rand: () => number): GridForge {
-  const scored = f.population.map((g) => scoreGrid(g, candles, fees)).sort((a, b) => rankOf(b) - rankOf(a));
+export function stepGridForge(f: GridForge, candles: Candle[], fees: GridFees, rand: () => number, opt: GridForgeOptions = {}): GridForge {
+  const pop = opt.classicTp ? f.population.map((g) => pinClassic({ ...g }, opt)) : f.population;
+  const scored = pop.map((g) => scoreGrid(g, candles, fees)).sort((a, b) => rankOf(b) - rankOf(a));
   const passed = scored.filter((s) => gridPasses(s));
   let champion = f.champion ? scoreGrid(f.champion.genome, candles, fees) : null;
   if (champion && !gridPasses(champion, 0.003)) champion = null;
@@ -312,7 +345,7 @@ export function stepGridForge(f: GridForge, candles: Candle[], fees: GridFees, r
     const b = scored[Math.floor(rand() * scored.length)];
     return (rankOf(a) > rankOf(b) ? a : b).genome;
   };
-  while (next.length < POP) next.push(rand() < 0.15 ? randomGridGenome(rand) : mutateGrid(pick(), pick(), rand));
+  while (next.length < POP) next.push(rand() < 0.15 ? randomGridGenome(rand, opt) : mutateGrid(pick(), pick(), rand, opt));
   const fits = scored.map(rankOf);
   return {
     generation: f.generation + 1,
