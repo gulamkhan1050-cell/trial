@@ -182,7 +182,11 @@ export class Dashboard {
     return `
       ${this.livePanelView()}
       <section class="kpis">
-        ${kpi(this.liveCtl?.live ? 'Paper grid profit' : 'Grid profit', `<span class="${cls(gridPnl)}">${signed(gridPnl)}</span>`, `${tot.roundTrips} round trips · all markets`)}
+        ${kpi(
+          this.liveCtl?.live ? 'Paper net result' : 'Grid net result',
+          `<span class="${cls(gridPnl + open)}">${signed(gridPnl + open)}</span>`,
+          `booked ${signed(gridPnl)} · held coins ${signed(open)} · ${tot.roundTrips} round trips`,
+        )}
         ${kpi('Ladders armed', `${tot.armed}/${tot.markets}`, `${tot.holding} holding · ${e.settings.grid.leverage}× leverage`)}
         ${kpi('Inventory', usd(tot.inventory), `open ${signed(open)}`)}
         ${kpi('Fees', `${(e.settings.grid.maker * 200).toFixed(2)}%`, 'maker, per round trip')}
