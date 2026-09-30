@@ -50,6 +50,8 @@ export class Dashboard {
   } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: true };
 
   private liveSettings: LiveSettings = loadLiveSettings();
+  /** Coin-picker (paper simulation) details on the Live tab: hidden unless asked for. */
+  private pickerOpen = false;
 
   constructor(
     private root: HTMLElement,
@@ -179,11 +181,28 @@ export class Dashboard {
           })
           .join('')
       : '';
+    const liveOn = this.liveCtl?.status === 'running';
+    const picker = `
+      <section class="card">
+        <h3>Coin picker <span class="dim">paper simulation that chooses coins &amp; settings for the live bot · not your money</span></h3>
+        <p class="small dim">It test-trades all ${tot.markets} coins with $${e.settings.startBalance} of play money and hands the live bot the coins and
+        grid settings that win on unseen data. It must keep running; you don't need to watch it.
+        Now: ${tot.armed}/${tot.markets} coins approved · play-money result <span class="${cls(gridPnl + open)}">${signed(gridPnl + open)}</span>.</p>
+        <button class="ghost" data-act="picker">${this.pickerOpen ? '▲ Hide coin picker details' : '▼ Show coin picker details'}</button>
+      </section>`;
+    const offCard = `
+      <section class="card live-card">
+        <h3>Live account <span class="down">OFF — not trading</span></h3>
+        <p class="small">Live trading isn't running, so nothing is happening on Binance. Your saved orders and coins are picked up again when you start.</p>
+        <button class="ghost primary" data-tab="setup">Go to Setup → ▶ Start live trading</button>
+      </section>`;
+    if (!this.pickerOpen) return `${liveOn || this.liveCtl?.live ? this.livePanelView() : offCard}${picker}`;
     return `
-      ${this.livePanelView()}
+      ${liveOn || this.liveCtl?.live ? this.livePanelView() : offCard}
+      ${picker}
       <section class="kpis">
         ${kpi(
-          this.liveCtl?.live ? 'Paper net result' : 'Grid net result',
+          'Paper net result',
           `<span class="${cls(gridPnl + open)}">${signed(gridPnl + open)}</span>`,
           `booked ${signed(gridPnl)} · held coins ${signed(open)} · ${tot.roundTrips} round trips`,
         )}
@@ -577,6 +596,9 @@ ${this.liveCardView()}
       else void this.engine.start();
     } else if (el.dataset.act?.startsWith('live-')) {
       void this.liveAction(el.dataset.act);
+    } else if (el.dataset.act === 'picker') {
+      this.pickerOpen = !this.pickerOpen;
+      this.renderTab(true);
     } else if (el.dataset.act === 'arena') {
       void this.toggleArena();
     } else if (el.dataset.act === 'flatten') {
