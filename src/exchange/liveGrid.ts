@@ -16,6 +16,7 @@ export interface LiveCandidate {
   symbol: string;
   genome: GridGenome;
   score: number; // FORGE's out-of-sample profit — higher is better
+  regime?: 'up' | 'chop' | 'down';
 }
 
 export interface LiveHost {
@@ -24,6 +25,8 @@ export interface LiveHost {
   /** Crash guard active: flatten and don't arm. */
   stressed(): boolean;
   log(kind: LogEntry['kind'], text: string, pnl?: number): void;
+  /** Share of coins not in a downtrend (1 = healthy market). Optional: 1 when absent. */
+  breadth?(): number;
 }
 
 export interface LiveConfig {
@@ -372,9 +375,17 @@ export class LiveGrid {
     }
   }
 
+  /** Coins allowed at once: all of them in a healthy market, half when most coins are falling. */
+  coinLimit(): number {
+    const b = this.host.breadth?.() ?? 1;
+    return b >= 0.6 ? this.cfg.maxCoins : Math.max(1, Math.ceil(this.cfg.maxCoins / 2));
+  }
+
   private async allocate(candidates: LiveCandidate[]) {
+    const limit = this.coinLimit();
     for (const cand of candidates) {
-      if (this.coins.size >= this.cfg.maxCoins) break;
+      if (this.coins.size >= limit) break;
+      if (cand.regime === 'down') continue;
       if (this.coins.has(cand.symbol) || this.foreign.has(cand.symbol)) continue;
       if ((this.cooldown.get(cand.symbol) ?? 0) > this.now()) continue;
       if (this.levelsFor(cand.symbol, cand.genome) < 1) continue; // exchange minimum too big for our slice

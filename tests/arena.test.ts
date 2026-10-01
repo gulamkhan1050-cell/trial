@@ -82,7 +82,7 @@ describe('crash guard', () => {
       days: 1,
       source: 'real',
       base: DEFAULT_SETTINGS,
-      contestants: [pick('NEW · 5× smart, no guard'), pick('NEW · 5× smart take-profit')],
+      contestants: [pick('REGIME · 3× no crash guard'), pick('REGIME · 3× grid')],
     });
     const [noGuard, guard] = out.results;
     expect(guard.trades).toBeGreaterThan(20); // it did trade the chop

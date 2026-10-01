@@ -142,7 +142,7 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   // they then trade identical ladders, so the comparison isolates what actually differs — and
   // the search (most of the Arena's CPU) runs once instead of once per contestant.
   // Grids that share fees and take-profit rules can share one FORGE (fast mode); old-vs-new must not.
-  const feeKey = (e: Engine) => `${e.settings.grid.maker}/${e.settings.grid.taker}/${e.settings.grid.classicTp ? 'classic' : 'smart'}`;
+  const feeKey = (e: Engine) => `${e.settings.grid.maker}/${e.settings.grid.taker}/${e.settings.grid.classicTp ? 'classic' : 'smart'}`; // FORGE ignores regime, so OLD and REGIME may share it
   const leaders = new Map<string, Engine>();
   const followerOf = new Map<Engine, Engine>();
   for (const e of engines) {
@@ -247,12 +247,12 @@ export function gridVariants(base: Settings): Contestant[] {
   const g = base.grid;
   const loose = { crashDrop: 0.025, crashBars: 30, crashShare: 0.67 };
   return [
-    // Old vs new take-profit on identical prices, same leverage, same stops.
-    { name: 'OLD · 5× classic 1-step take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: true } } },
-    { name: 'OLD · 3× classic 1-step take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true } } },
-    { name: 'NEW · 5× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: false } } },
-    { name: 'NEW · 3× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false } } },
-    { name: 'NEW · 5× smart, no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: false, classicTp: false } } },
+    // OLD = the grid as it ran live; REGIME = same grid that reads trend/volume first and skips downtrends.
+    { name: 'OLD · 3× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true, regime: false } } },
+    { name: 'REGIME · 3× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true, regime: true } } },
+    { name: 'REGIME · 5× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: true, regime: true } } },
+    { name: 'REGIME · 3× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false, regime: true } } },
+    { name: 'REGIME · 3× no crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false, classicTp: true, regime: true } } },
   ];
 }
 

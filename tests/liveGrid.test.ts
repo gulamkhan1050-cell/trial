@@ -469,3 +469,28 @@ describe('LiveGrid daily target and loss limit', () => {
     expect(live.killed).toBe(true);
   });
 });
+
+describe('LiveGrid market regime', () => {
+  it('never arms a coin in a downtrend, and runs half the coins when most of the market is falling', async () => {
+    const ex = new MockExchange(RULES, 100);
+    ex.setPrice('DOGEUSDT', 0.1);
+    ex.setPrice('XRPUSDT', 2);
+    let mood = 1;
+    const host: LiveHost = {
+      candidates: () => [
+        { symbol: 'DOGEUSDT', genome: G, score: 0.05, regime: 'down' },
+        { symbol: 'XRPUSDT', genome: G, score: 0.01, regime: 'up' },
+      ],
+      stressed: () => false,
+      log: () => undefined,
+      breadth: () => mood,
+    };
+    const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, maxCoins: 4 }, Object.keys(RULES));
+    await live.start();
+    await live.tick();
+    expect([...live.coins.keys()]).toEqual(['XRPUSDT']); // DOGE skipped despite the better score
+    expect(live.coinLimit()).toBe(4);
+    mood = 0.3;
+    expect(live.coinLimit()).toBe(2);
+  });
+});

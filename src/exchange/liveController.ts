@@ -98,11 +98,13 @@ export class LiveController {
   host(): LiveHost {
     const e = this.engine;
     return {
+      // Coins FORGE rates and SENTRY allows, never one in a downtrend; rising coins first, then best score.
       candidates: (): LiveCandidate[] =>
         [...e.grids.values()]
-          .filter((g) => g.forge.champion && (g.bot?.armed || !g.why))
-          .map((g) => ({ symbol: g.symbol, genome: g.forge.champion!.genome, score: g.forge.champion!.test.profit }))
-          .sort((a, b) => b.score - a.score),
+          .filter((g) => g.forge.champion && (g.bot?.armed || !g.why) && !(e.settings.grid.regime && g.regime?.regime === 'down'))
+          .map((g) => ({ symbol: g.symbol, genome: g.forge.champion!.genome, score: g.forge.champion!.test.profit, regime: g.regime?.regime }))
+          .sort((a, b) => Number(b.regime === 'up') - Number(a.regime === 'up') || b.score - a.score),
+      breadth: () => (e.settings.grid.regime ? e.marketBreadth() : 1),
       stressed: () => e.isStressed(),
       log: (kind, text, pnl) => e.logExternal(kind, text, pnl),
     };

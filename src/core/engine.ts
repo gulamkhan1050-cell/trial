@@ -16,12 +16,14 @@ export interface GridSlot {
   orphan: number; // bars since FORGE last had a champion
   trails: number; // ladder moves up since the last heartbeat
   why: string; // SENTRY's reason for not arming, if any
+  regime?: RegimeRead; // SCOUT's latest read of the coin: up / chop / down
 }
 
 function newSlot(symbol: string, rand: () => number, classicTp = false): GridSlot {
   return { symbol, forge: newGridForge(rand, { classicTp }), bot: null, roundTrips: 0, last: 0, wait: 0, orphan: 0, trails: 0, why: '' };
 }
 import { mulberry32, uid } from './rng';
+import { type RegimeRead, breadth, readRegime } from './regime';
 import type { AgentId, Broker, Candle, LogEntry, Position, Signal, Trade } from './types';
 
 export type FeedMode = 'binance' | 'replay' | 'sim';
@@ -45,6 +47,8 @@ export interface Settings {
     crashDrop: number; // a market counts as dumping if it fell this fraction…
     crashBars: number; // …over this many bars
     crashShare: number; // guard fires when at least this share of markets are dumping
+    /** Read each coin's trend/volume regime: no new long ladder in a downtrend. */
+    regime?: boolean;
     /** Pin grids to the old one-step take-profit (A/B baseline); off = FORGE may evolve a smart take-profit. */
     classicTp?: boolean;
   };
@@ -77,7 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // Real-week Arena runs: the 3x grid was the best risk/return; a 1%/15-bar guard fired on ordinary
   // volatility and cost money, while the loose 2.5%/30-bar guard cost ~0.4% and trimmed drawdown.
   // Classic one-step take-profit: the smart take-profit lost on its first live day and has not yet won a real-history Arena.
-  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: true, crashDrop: 0.025, crashBars: 30, crashShare: 0.67, classicTp: true },
+  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: true, crashDrop: 0.025, crashBars: 30, crashShare: 0.67, classicTp: true, regime: true },
 };
 
 export interface SymbolState {
@@ -365,6 +369,11 @@ export class Engine {
 
   gridMode(): boolean {
     return this.settings.strategy === 'grid';
+  }
+
+  /** Share of coins not in a downtrend (1 = every coin healthy). */
+  marketBreadth(): number {
+    return breadth([...this.grids.values()].flatMap((g) => (g.regime ? [g.regime] : [])));
   }
 
   /** True while the crash guard's market-wide pause is running. */
@@ -693,7 +702,14 @@ export class Engine {
     const bot = g.bot;
     const price = s.candles[s.candles.length - 1].c;
     const flat = !bot || bot.inventory().qty === 0;
-    this.agents.SCOUT = { busy: true, text: `reading ${short(s.symbol)} range`, at: Date.now() };
+    if (this.settings.grid.regime) g.regime = readRegime(s.candles);
+    const down = this.settings.grid.regime && g.regime?.regime === 'down';
+    this.agents.SCOUT = { busy: true, text: `${short(s.symbol)} ${g.regime ? `${g.regime.regime} · ${g.regime.why}` : 'range'}`, at: Date.now() };
+    // A downtrend is where long ladders lose: stand aside once nothing is held (the stop still guards inventory).
+    if (down && bot?.armed && flat) {
+      bot.disarm();
+      this.say('SENTRY', 'veto', `✕ ${s.symbol} grid stood aside — ${g.regime!.why}`);
+    }
 
     // FORGE retired the strategy: keep working the ladder for a grace period (a retirement is
     // often noise at the pass/fail edge), then stand down once nothing is held.
@@ -717,6 +733,7 @@ export class Engine {
     if (!champ) why = 'no grid survived FORGE yet';
     else if (this.stressWait > 0) why = `crash guard: market-wide sell-off, paused ${this.stressWait} more bars`;
     else if (g.wait > 0) why = `cooldown ${g.wait} bars after stop`;
+    else if (down) why = `downtrend — ${g.regime!.why}`;
     else if (this.dayPnl <= -this.settings.sentry.dailyLossLimit * this.dayStartEquity) why = 'daily loss limit hit';
     else if (!gridSafe(s.candles, s.candles.length - 1, champ.genome)) why = 'selling off too hard for a grid';
     g.why = why;

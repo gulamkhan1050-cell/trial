@@ -404,8 +404,8 @@ export class Dashboard {
     return `
       <section class="card form">
         <h3>Arena <span class="dim">same real prices, every contestant, full speed</span></h3>
-        <p class="dim small">Replays a past stretch of real market bar by bar. With the grid variants it races the OLD one-step take-profit
-        against the NEW smart take-profit (same leverage, same order sizes, same stops), each with its own $${this.engine.settings.startBalance} paper account.</p>
+        <p class="dim small">Replays a past stretch of real market bar by bar. It races the OLD grid against the REGIME grid, which reads each coin's trend and volume
+        and skips downtrends, plus 5×, smart take-profit and no-crash-guard variants. Each has its own $${this.engine.settings.startBalance} paper account on identical prices.</p>
         <div class="arena-controls">
           <label>Prices
             <select data-arena="source">${opt('real', a.source, 'Real Binance history')}${opt('sim', a.source, 'Offline simulator')}</select></label>
@@ -414,7 +414,7 @@ export class Dashboard {
           <label>Markets
             <select data-arena="markets">${opt(6, a.markets, '6 majors')}${opt(15, a.markets, '15 coins')}${opt(30, a.markets, '30 coins (slower)')}</select></label>
           <label>Contestants
-            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'OLD vs NEW take-profit + variants')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
+            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'OLD vs REGIME (+ 5×, smart TP, no guard)')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
           <label>FORGE mode
             <select data-arena="thorough">${opt('1', a.thorough ? '1' : '0', 'Thorough — re-tune hourly, like live (slower)')}${opt('0', a.thorough ? '1' : '0', 'Fast — shared, re-tune every 3h')}</select></label>
           <label>Grid leverage (Normal vs Micro)
