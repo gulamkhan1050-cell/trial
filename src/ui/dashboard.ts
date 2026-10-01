@@ -254,7 +254,7 @@ export class Dashboard {
   private liveCardView(): string {
     const l = this.liveSettings;
     const g = this.engine.settings.grid;
-    const recOn = isRecommended(l) && g.classicTp === false && g.regime !== false;
+    const recOn = isRecommended(l) && g.classicTp !== false && g.regime === false;
     const opt = (v: string | number, cur: string | number, label: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     return `
       <section class="card form live-card">
@@ -283,7 +283,7 @@ export class Dashboard {
             <select data-live="compound">${opt('1', l.compound ? '1' : '0', 'On — budget grows with profit, shrinks with loss')}${opt('0', l.compound ? '1' : '0', 'Off — fixed budget')}</select></label>
         </div>
         <div class="presets">
-          <button class="ghost ${recOn ? 'on-profile' : ''}" data-act="live-recommended">${recOn ? '✓ RECOMMENDED ON' : '★ Recommended'}: $300 · 3× · regime + smart take-profit · 8 coins · reinvest · bank $10/day · 20% loss limit</button>
+          <button class="ghost ${recOn ? 'on-profile' : ''}" data-act="live-recommended">${recOn ? '✓ RECOMMENDED ON' : '★ Recommended'}: $300 · 3× classic grid (green 6/6 real runs) · 8 coins · reinvest · bank $10/day · 20% loss limit</button>
           <button class="ghost ${isAggressive(l) ? 'on-profile' : ''}" data-act="live-aggressive">${isAggressive(l) ? '✓ AGGRESSIVE ON' : '⚡ Aggressive'}: $300 (≈₹25k) · 5× · 8 coins · reinvest · 20% loss limit</button>
           <button class="ghost" data-act="live-check">Check connection</button>
           <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
@@ -357,11 +357,11 @@ export class Dashboard {
         this.engine.resetCounters();
         this.renderTab(true);
       } else if (act === 'live-recommended') {
-        // The real-week Arena winner: 3x, market regime on, smart take-profit; bank $10 a day.
+        // The repeated real-week Arena winner: plain 3x grid, classic take-profit, green in 6/6 runs; bank $10 a day.
         Object.assign(s, { maxCapital: 300, leverage: 3, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 10 });
         saveLiveSettings(s);
         const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
-        this.engine.updateSettings({ ...PRESETS.live, grid: { ...PRESETS.live.grid!, ...fees, classicTp: false, regime: true } });
+        this.engine.updateSettings({ ...PRESETS.live, grid: { ...PRESETS.live.grid!, ...fees, classicTp: true, regime: false } });
         this.renderTab(true);
         this.renderLiveStatus(c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start');
       } else if (act === 'live-aggressive') {
@@ -582,13 +582,13 @@ ${this.liveCardView()}
           <select data-set="grid.leverage">${[1, 2, 3, 4, 5].map((x) => `<option value="${x}" ${x === s.grid.leverage ? 'selected' : ''}>${x}×</option>`).join('')}</select></label>
         <label>Take-profit
           <select data-set="grid.classicTp">
-            <option value="0" ${s.grid.classicTp === false ? 'selected' : ''}>Smart — FORGE picks 1–3 steps (won the real-week Arena: +6.3% vs −0.5%)</option>
-            <option value="1" ${s.grid.classicTp !== false ? 'selected' : ''}>Classic — always one step up</option>
+            <option value="1" ${s.grid.classicTp !== false ? 'selected' : ''}>Classic — one step up (green in 6/6 repeated real runs)</option>
+            <option value="0" ${s.grid.classicTp === false ? 'selected' : ''}>Smart — FORGE picks 1–3 steps (no better on average)</option>
           </select></label>
         <label>Market regime (skip coins in a downtrend, fewer coins on bad days)
           <select data-set="grid.regime">
-            <option value="1" ${s.grid.regime !== false ? 'selected' : ''}>On — recommended</option>
-            <option value="0" ${s.grid.regime === false ? 'selected' : ''}>Off</option>
+            <option value="0" ${s.grid.regime === false ? 'selected' : ''}>Off — recommended (the plain grid won the repeated runs)</option>
+            <option value="1" ${s.grid.regime !== false ? 'selected' : ''}>On — skip downtrends (experimental)</option>
           </select></label>
         <label>Crash guard (pause every grid when most coins dump together)
           <select data-set="grid.crashGuard">
