@@ -249,6 +249,7 @@ export function gridVariants(base: Settings): Contestant[] {
   return [
     // Old vs new take-profit on identical prices, same leverage, same stops.
     { name: 'OLD · 5× classic 1-step take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: true } } },
+    { name: 'OLD · 3× classic 1-step take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true } } },
     { name: 'NEW · 5× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: false } } },
     { name: 'NEW · 3× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false } } },
     { name: 'NEW · 5× smart, no guard', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: false, classicTp: false } } },

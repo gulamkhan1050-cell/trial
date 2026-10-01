@@ -555,6 +555,11 @@ ${this.liveCardView()}
         continuously and only coins that beat fees on unseen data are traded for real.</p>
         <label>Grid leverage used for picking (match your live leverage)
           <select data-set="grid.leverage">${[1, 2, 3, 4, 5].map((x) => `<option value="${x}" ${x === s.grid.leverage ? 'selected' : ''}>${x}×</option>`).join('')}</select></label>
+        <label>Take-profit
+          <select data-set="grid.classicTp">
+            <option value="1" ${s.grid.classicTp !== false ? 'selected' : ''}>Classic — sell one step up (proven)</option>
+            <option value="0" ${s.grid.classicTp === false ? 'selected' : ''}>Smart — FORGE picks 1–3 steps (experimental, lost on its first live day)</option>
+          </select></label>
         <label>Crash guard (pause every grid when most coins dump together)
           <select data-set="grid.crashGuard">
             <option value="1" ${s.grid.crashGuard ? 'selected' : ''}>On — recommended</option>
@@ -644,6 +649,9 @@ ${this.liveCardView()}
         break;
       case 'strategy':
         this.engine.updateSettings({ strategy: el.value as Settings['strategy'] });
+        break;
+      case 'grid.classicTp':
+        this.engine.updateSettings({ grid: { ...s.grid, classicTp: el.value === '1' } });
         break;
       case 'grid.crashGuard':
         this.engine.updateSettings({ grid: { ...s.grid, crashGuard: el.value === '1' } });
