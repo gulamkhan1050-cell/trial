@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, Engine, type Settings } from './engine';
 import { BINANCE_PUBLIC, type FeedHandlers, type MarketFeed, partial, SimFeed } from './market';
+import { readRegime } from './regime';
 import type { Candle } from './types';
 
 /**
@@ -24,6 +25,11 @@ export interface ArenaResult {
   peak: number; // highest equity reached
   bestDay: number;
   worstDay: number;
+  /** Set when averaged over repeated runs: how many runs, their range, and how many ended green. */
+  runs?: number;
+  minFinal?: number;
+  maxFinal?: number;
+  greenRuns?: number;
 }
 
 export interface ArenaProgress {
@@ -45,6 +51,8 @@ export interface ArenaOptions {
    * 'thorough': every contestant runs its own FORGE, re-tuned every ~1h (the original Arena; ~4× slower).
    */
   forgeMode?: 'fast' | 'thorough';
+  /** Also race HOLD (buy every coin, hold) and TREND LONG (long while a coin's regime is UP) at this leverage. */
+  benchmarkLeverage?: number;
 }
 
 export const WARMUP_BARS = 1200;
@@ -117,9 +125,53 @@ export async function loadData(
   return { data, source: 'sim', note: 'offline simulated prices', symbols };
 }
 
+type Loaded = Awaited<ReturnType<typeof loadData>>;
+
 export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
-  const totalBars = WARMUP_BARS + opt.days * 1440;
-  const loaded = await loadData(opt.symbols, totalBars, opt.source, opt.onProgress);
+  const loaded = await loadData(opt.symbols, WARMUP_BARS + opt.days * 1440, opt.source, opt.onProgress);
+  return simulate(loaded, opt, 0);
+}
+
+/**
+ * Run the same prices `runs` times with different FORGE seeds and average each contestant, so a
+ * setting has to win on average — not get lucky once. Prices are downloaded once.
+ */
+export async function runArenaRepeated(opt: ArenaOptions, runs: number): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
+  const loaded = await loadData(opt.symbols, WARMUP_BARS + opt.days * 1440, opt.source, opt.onProgress);
+  const all: ArenaResult[][] = [];
+  let note = '';
+  for (let k = 0; k < runs && !opt.signal?.cancelled; k++) {
+    const out = await simulate(loaded, { ...opt, onProgress: (p) => opt.onProgress?.({ ...p, text: `run ${k + 1}/${runs} · ${p.text}`, pct: (k + p.pct) / runs }) }, k);
+    all.push(out.results);
+    note = out.note;
+  }
+  return { results: averageRuns(all), note: `${note} · average of ${all.length} run${all.length === 1 ? '' : 's'}`, source: loaded.source };
+}
+
+export function averageRuns(all: ArenaResult[][]): ArenaResult[] {
+  if (all.length <= 1) return all[0] ?? [];
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  return all[0].map((first, j) => {
+    const rs = all.map((run) => run[j]);
+    const finals = rs.map((r) => r.final);
+    return {
+      ...first,
+      final: mean(finals),
+      trades: Math.round(mean(rs.map((r) => r.trades))),
+      winRate: mean(rs.map((r) => r.winRate)),
+      maxDrawdown: mean(rs.map((r) => r.maxDrawdown)),
+      peak: mean(rs.map((r) => r.peak)),
+      bestDay: Math.max(...rs.map((r) => r.bestDay)),
+      worstDay: Math.min(...rs.map((r) => r.worstDay)),
+      runs: rs.length,
+      minFinal: Math.min(...finals),
+      maxFinal: Math.max(...finals),
+      greenRuns: finals.filter((f) => f > first.start).length,
+    };
+  });
+}
+
+async function simulate(loaded: Loaded, opt: ArenaOptions, run: number): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
   const { data, source, note } = loaded;
   const symbols = loaded.symbols;
   const len = Math.min(...symbols.map((s) => data[s].length));
@@ -132,7 +184,7 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   // contestant gets its own seed, so their FORGEs search independently (as the original Arena did).
   const thorough = opt.forgeMode === 'thorough';
   const engines = opt.contestants.map((c, j) => {
-    const e = new Engine({ ...opt.base, ...c.patch, feed: 'sim', symbols: symbols }, 20260101 + (thorough ? j * 7919 : 0));
+    const e = new Engine({ ...opt.base, ...c.patch, feed: 'sim', symbols: symbols }, 20260101 + run * 104729 + (thorough ? j * 7919 : 0));
     e.manualForge = true;
     return e;
   });
@@ -197,8 +249,81 @@ export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResul
   for (const e of engines) e.stop();
 
   const results = engines.map((e, j) => summarize(opt.contestants[j].name, e, curves[j]));
+  if (opt.benchmarkLeverage) {
+    const start = opt.base.startBalance;
+    const fee = opt.base.grid.taker;
+    results.push(benchmark('HOLD · 3× buy every coin and hold', data, symbols, len, start, opt.benchmarkLeverage, fee, () => true));
+    results.push(benchmark('TREND LONG · 3× long while regime is UP', data, symbols, len, start, opt.benchmarkLeverage, fee, 'trend'));
+  }
   opt.onProgress?.({ stage: 'done', pct: 1, text: 'done' });
   return { results, note: note + (thorough ? ' · thorough FORGE' : ' · fast FORGE'), source };
+}
+
+/**
+ * Simple long benchmarks on the same prices, no FORGE: an equal slice of the bank per coin at `lev`,
+ * market orders (taker fee) in and out, and a coin is liquidated (its slice lost) if it falls 1/lev.
+ * HOLD buys every coin at the start; TREND is long a coin only from an UP regime read until a DOWN one.
+ */
+function benchmark(
+  name: string,
+  data: Record<string, Candle[]>,
+  symbols: string[],
+  len: number,
+  start: number,
+  lev: number,
+  fee: number,
+  mode: (() => boolean) | 'trend',
+): ArenaResult {
+  const slice = start / symbols.length;
+  const pos = symbols.map(() => ({ in: false, entry: 0, cash: slice, trades: 0, wins: 0, dead: false }));
+  const value = (j: number, px: number) => {
+    const p = pos[j];
+    if (!p.in) return p.cash;
+    return Math.max(0, p.cash + p.cash * lev * (px / p.entry - 1));
+  };
+  const close = (j: number, px: number) => {
+    const p = pos[j];
+    const v = value(j, px) - p.cash * lev * fee;
+    if (v > p.cash) p.wins++;
+    p.cash = Math.max(0, v);
+    p.in = false;
+    p.trades++;
+  };
+  const open = (j: number, px: number) => {
+    const p = pos[j];
+    if (p.dead || p.cash <= 0) return;
+    p.cash -= p.cash * lev * fee;
+    p.entry = px;
+    p.in = true;
+  };
+  const equity: { t: number; v: number }[] = [];
+  for (let i = WARMUP_BARS; i < len; i++) {
+    symbols.forEach((s, j) => {
+      const k = data[s][i];
+      const p = pos[j];
+      if (p.in && k.l <= p.entry * (1 - 1 / lev)) {
+        p.cash = 0; // liquidated
+        p.in = false;
+        p.dead = true;
+        p.trades++;
+        return;
+      }
+      if (mode === 'trend') {
+        if ((i - WARMUP_BARS) % 15 !== 0) return;
+        const r = readRegime(data[s].slice(Math.max(0, i - 300), i + 1)).regime;
+        if (!p.in && r === 'up') open(j, k.c);
+        else if (p.in && r === 'down') close(j, k.c);
+      } else if (i === WARMUP_BARS) open(j, k.c);
+    });
+    if ((i - WARMUP_BARS) % 30 === 0 || i === len - 1) {
+      equity.push({ t: data[symbols[0]][i].t, v: symbols.reduce((sum, s, j) => sum + value(j, data[s][i].c), 0) });
+    }
+  }
+  // Mark open positions at the last price (no exit fee) so the result is comparable to the grids' equity.
+  const trades = pos.reduce((n, p) => n + p.trades + (p.in ? 1 : 0), 0);
+  const wins = pos.reduce((n, p) => n + p.wins, 0);
+  const fake = { startBalance: start, totalEquity: () => equity[equity.length - 1]?.v ?? start, tradeCount: trades, winCount: wins } as unknown as Engine;
+  return summarize(name, fake, equity);
 }
 
 function summarize(name: string, e: Engine, equity: { t: number; v: number }[]): ArenaResult {
@@ -247,13 +372,10 @@ export function gridVariants(base: Settings): Contestant[] {
   const g = base.grid;
   const loose = { crashDrop: 0.025, crashBars: 30, crashShare: 0.67 };
   return [
-    // OLD = the grid as it first ran live. REGIME + smart take-profit won the real week (+6.3% vs -0.5%),
-    // so its leverage is what's left to settle: 3x / 4x / 5x, plus 3x without the crash guard.
+    // The grids that matter; HOLD and TREND LONG are added as benchmarks (benchmarkLeverage).
     { name: 'OLD · 3× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true, regime: false } } },
     { name: 'SMART · 3× regime + smart TP', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false, regime: true } } },
-    { name: 'SMART · 4× regime + smart TP', patch: { strategy: 'grid', grid: { ...g, leverage: 4, crashGuard: true, ...loose, classicTp: false, regime: true } } },
     { name: 'SMART · 5× regime + smart TP', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: false, regime: true } } },
-    { name: 'SMART · 3× no crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false, classicTp: false, regime: true } } },
   ];
 }
 

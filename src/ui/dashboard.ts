@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, MAJORS, MEGA_MARKETS, WIDE_MARKETS, type Engine, fmtP
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, lineChart } from './charts';
 import { type LiveController, type LiveSettings, loadLiveSettings, saveLiveSettings } from '../exchange/liveController';
-import { ARENA_CONTESTANTS, type ArenaProgress, type ArenaResult, gridVariants, runArena } from '../core/arena';
+import { type ArenaProgress, type ArenaResult, gridVariants, runArenaRepeated } from '../core/arena';
 
 type Tab = 'grid' | 'log' | 'arena' | 'setup';
 
@@ -47,7 +47,8 @@ export class Dashboard {
     thorough: boolean;
     leverage: number;
     variants: boolean;
-  } = { variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: true };
+    repeats: number;
+  } = { repeats: 3, variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: true };
 
   private liveSettings: LiveSettings = loadLiveSettings();
   /** Coin-picker (paper simulation) details on the Live tab: hidden unless asked for. */
@@ -406,8 +407,9 @@ export class Dashboard {
     return `
       <section class="card form">
         <h3>Arena <span class="dim">same real prices, every contestant, full speed</span></h3>
-        <p class="dim small">Replays a past stretch of real market bar by bar. It races the OLD grid against the REGIME grid, which reads each coin's trend and volume
-        and skips downtrends, plus 5×, smart take-profit and no-crash-guard variants. Each has its own $${this.engine.settings.startBalance} paper account on identical prices.</p>
+        <p class="dim small">Replays a past stretch of real market bar by bar and races the micro grids (OLD 3×, SMART 3×, SMART 5×) against two long strategies:
+        HOLD (buy every coin, hold) and TREND LONG (long a coin only while its trend reads UP), all at the same leverage on identical prices, each with
+        its own $${this.engine.settings.startBalance} paper account. Repeating runs averages out the luck of FORGE's random search.</p>
         <div class="arena-controls">
           <label>Prices
             <select data-arena="source">${opt('real', a.source, 'Real Binance history')}${opt('sim', a.source, 'Offline simulator')}</select></label>
@@ -415,12 +417,10 @@ export class Dashboard {
             <select data-arena="days">${opt(1, a.days, 'Last 1 day')}${opt(3, a.days, 'Last 3 days')}${opt(7, a.days, 'Last 7 days')}</select></label>
           <label>Markets
             <select data-arena="markets">${opt(6, a.markets, '6 majors')}${opt(15, a.markets, '15 coins')}${opt(30, a.markets, '30 coins (slower)')}</select></label>
-          <label>Contestants
-            <select data-arena="variants">${opt('1', a.variants ? '1' : '0', 'OLD vs SMART 3× / 4× / 5×')}${opt('0', a.variants ? '1' : '0', 'Normal vs Micro')}</select></label>
           <label>FORGE mode
             <select data-arena="thorough">${opt('1', a.thorough ? '1' : '0', 'Thorough — re-tune hourly, like live (slower)')}${opt('0', a.thorough ? '1' : '0', 'Fast — shared, re-tune every 3h')}</select></label>
-          <label>Grid leverage (Normal vs Micro)
-            <select data-arena="leverage">${opt(1, a.leverage, '1×')}${opt(2, a.leverage, '2×')}${opt(3, a.leverage, '3×')}</select></label>
+          <label>Repeat each setting (average out luck)
+            <select data-arena="repeats">${opt(1, a.repeats, '1 run')}${opt(3, a.repeats, '3 runs — recommended')}${opt(5, a.repeats, '5 runs (slowest)')}</select></label>
         </div>
         <button class="run-arena" data-act="arena">${a.running ? '■ Cancel' : '▶ Run arena'}</button>
       </section>
@@ -470,7 +470,12 @@ export class Dashboard {
               ${stat('Best day', signed(r.bestDay))}
               ${stat('Worst day', signed(r.worstDay))}
               ${stat('Per day', signed((r.final - start) / Math.max(1, r.equity.length ? (r.equity[r.equity.length - 1].t - r.equity[0].t) / 86_400_000 : 1)))}
-            </div></section>`,
+            </div>${
+              r.runs && r.runs > 1
+                ? `<p class="small">Average of ${r.runs} runs · range <span class="${cls((r.minFinal ?? 0) - start)}">${signed((r.minFinal ?? 0) - start)}</span> to
+                   <span class="${cls((r.maxFinal ?? 0) - start)}">${signed((r.maxFinal ?? 0) - start)}</span> · green in <b>${r.greenRuns}/${r.runs}</b> runs</p>`
+                : ''
+            }</section>`,
         )
         .join('')}</div>`;
     }
@@ -500,19 +505,20 @@ export class Dashboard {
     this.renderArenaLive();
     const base = this.engine.settings;
     try {
-      const out = await runArena({
+      const out = await runArenaRepeated({
         symbols: a.markets >= 30 ? MEGA_MARKETS : a.markets >= 15 ? WIDE_MARKETS : MAJORS,
         days: a.days,
         source: a.source,
-        base: { ...base, grid: { ...base.grid, leverage: a.leverage } },
-        contestants: a.variants ? gridVariants(base) : ARENA_CONTESTANTS,
+        base,
+        contestants: gridVariants(base),
+        benchmarkLeverage: 3,
         forgeMode: a.thorough ? 'thorough' : 'fast',
         signal: a.signal,
         onProgress: (p) => {
           a.progress = p;
           if (this.tab === 'arena') this.renderArenaLive();
         },
-      });
+      }, a.repeats);
       a.results = out.results;
       a.note = out.note + (a.signal.cancelled ? ' · cancelled early' : '');
     } catch (err) {
@@ -662,6 +668,7 @@ ${this.liveCardView()}
       if (ak === 'thorough') a.thorough = el.value === '1';
       if (ak === 'leverage') a.leverage = Number(el.value);
       if (ak === 'variants') a.variants = el.value === '1';
+      if (ak === 'repeats') a.repeats = Number(el.value);
       return;
     }
     const key = el.dataset.set;
@@ -748,7 +755,7 @@ ${this.liveCardView()}
   }
 }
 
-const ARENA_COLORS = ['--scout', '--hawk', '--forge', '--warn', '--down'];
+const ARENA_COLORS = ['--scout', '--hawk', '--forge', '--warn', '--down', '--up', '--muted'];
 
 const PRESETS: Record<string, Partial<Settings>> = {
   // The setup that won the real-week Arena, on live real-time prices (paper fills).

@@ -56,7 +56,6 @@ describe('crash guard', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('loses less than an unguarded grid when every market dumps together', async () => {
-    const { gridVariants } = await import('../src/core/arena');
     const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
     const n = 1200 + 1440 + 1;
     const t0 = Date.UTC(2026, 0, 1);
@@ -75,14 +74,18 @@ describe('crash guard', () => {
       const end = Number(u.searchParams.get('endTime') ?? Infinity);
       return new Response(JSON.stringify(data[u.searchParams.get('symbol')!].filter((k) => k[0] <= end).slice(-1000)));
     });
-    const all = gridVariants(DEFAULT_SETTINGS);
+    const g = { ...DEFAULT_SETTINGS.grid, leverage: 3, crashDrop: 0.025, crashBars: 30, crashShare: 0.67, classicTp: false, regime: true };
+    const all = [
+      { name: 'no guard', patch: { strategy: 'grid' as const, grid: { ...g, crashGuard: false } } },
+      { name: 'guard', patch: { strategy: 'grid' as const, grid: { ...g, crashGuard: true } } },
+    ];
     const pick = (name: string) => all.find((c) => c.name === name)!;
     const out = await runArena({
       symbols,
       days: 1,
       source: 'real',
       base: DEFAULT_SETTINGS,
-      contestants: [pick('SMART · 3× no crash guard'), pick('SMART · 3× regime + smart TP')],
+      contestants: [pick('no guard'), pick('guard')],
     });
     const [noGuard, guard] = out.results;
     expect(guard.trades).toBeGreaterThan(20); // it did trade the chop
@@ -129,4 +132,30 @@ describe('FORGE mode', () => {
     // Separate FORGEs evolve independently, so the results differ from fast mode.
     expect(thorough.results.map((r) => r.final)).not.toEqual(fast.results.map((r) => r.final));
   }, 180_000);
+});
+
+describe('long benchmarks and repeated runs', () => {
+  it('races HOLD and TREND LONG next to the grids on the same prices', async () => {
+    const { gridVariants } = await import('../src/core/arena');
+    const out = await runArena({ symbols: ['BTCUSDT', 'ETHUSDT'], days: 1, source: 'sim', base: DEFAULT_SETTINGS, contestants: gridVariants(DEFAULT_SETTINGS).slice(1, 2), benchmarkLeverage: 3 });
+    const names = out.results.map((r) => r.name);
+    expect(names.some((n) => n.startsWith('HOLD'))).toBe(true);
+    expect(names.some((n) => n.startsWith('TREND LONG'))).toBe(true);
+    for (const r of out.results) {
+      expect(Number.isFinite(r.final)).toBe(true);
+      expect(r.final).toBeGreaterThanOrEqual(0);
+      expect(r.equity.length).toBeGreaterThan(10);
+    }
+  }, 120_000);
+
+  it('averages repeated runs and reports the range and how many runs ended green', async () => {
+    const { averageRuns } = await import('../src/core/arena');
+    const mk = (final: number) => ({ name: 'x', equity: [], start: 1000, final, trades: 10, winRate: 0.5, maxDrawdown: 0.1, peak: final, bestDay: 5, worstDay: -5 });
+    const [avg] = averageRuns([[mk(1060)], [mk(1003)], [mk(970)]]);
+    expect(avg.final).toBeCloseTo(1011, 6);
+    expect(avg.minFinal).toBe(970);
+    expect(avg.maxFinal).toBe(1060);
+    expect(avg.greenRuns).toBe(2);
+    expect(avg.runs).toBe(3);
+  });
 });
