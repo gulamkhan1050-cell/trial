@@ -247,12 +247,13 @@ export function gridVariants(base: Settings): Contestant[] {
   const g = base.grid;
   const loose = { crashDrop: 0.025, crashBars: 30, crashShare: 0.67 };
   return [
-    // OLD = the grid as it ran live; REGIME = same grid that reads trend/volume first and skips downtrends.
+    // OLD = the grid as it first ran live. REGIME + smart take-profit won the real week (+6.3% vs -0.5%),
+    // so its leverage is what's left to settle: 3x / 4x / 5x, plus 3x without the crash guard.
     { name: 'OLD · 3× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true, regime: false } } },
-    { name: 'REGIME · 3× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: true, regime: true } } },
-    { name: 'REGIME · 5× grid', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: true, regime: true } } },
-    { name: 'REGIME · 3× smart take-profit', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false, regime: true } } },
-    { name: 'REGIME · 3× no crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false, classicTp: true, regime: true } } },
+    { name: 'SMART · 3× regime + smart TP', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: true, ...loose, classicTp: false, regime: true } } },
+    { name: 'SMART · 4× regime + smart TP', patch: { strategy: 'grid', grid: { ...g, leverage: 4, crashGuard: true, ...loose, classicTp: false, regime: true } } },
+    { name: 'SMART · 5× regime + smart TP', patch: { strategy: 'grid', grid: { ...g, leverage: 5, crashGuard: true, ...loose, classicTp: false, regime: true } } },
+    { name: 'SMART · 3× no crash guard', patch: { strategy: 'grid', grid: { ...g, leverage: 3, crashGuard: false, classicTp: false, regime: true } } },
   ];
 }
 

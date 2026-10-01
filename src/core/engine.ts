@@ -80,8 +80,8 @@ export const DEFAULT_SETTINGS: Settings = {
   strategy: 'grid',
   // Real-week Arena runs: the 3x grid was the best risk/return; a 1%/15-bar guard fired on ordinary
   // volatility and cost money, while the loose 2.5%/30-bar guard cost ~0.4% and trimmed drawdown.
-  // Classic one-step take-profit: the smart take-profit lost on its first live day and has not yet won a real-history Arena.
-  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: true, crashDrop: 0.025, crashBars: 30, crashShare: 0.67, classicTp: true, regime: true },
+  // Real-week Arena (7 days, 15 coins): regime filter + smart take-profit at 3x made +6.3% while the classic grid made -0.5%.
+  grid: { ...DEFAULT_GRID_FEES, leverage: 3, crashGuard: true, crashDrop: 0.025, crashBars: 30, crashShare: 0.67, classicTp: false, regime: true },
 };
 
 export interface SymbolState {
