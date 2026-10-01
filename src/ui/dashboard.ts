@@ -272,12 +272,15 @@ export class Dashboard {
             <select data-live="leverage">${[1, 2, 3, 4, 5].map((x) => opt(x, l.leverage, `${x}×`)).join('')}</select></label>
           <label>Max coins at once
             <select data-live="maxCoins">${[1, 2, 3, 4, 5, 6, 8, 10].map((x) => opt(x, l.maxCoins, String(x))).join('')}</select></label>
-          <label>Loss limit (% of wallet) → kill
+          <label>Loss limit (% of capital) → kill
             <input type="number" min="1" max="50" data-live="dailyLossLimit" value="${pctInput(l.dailyLossLimit)}"></label>
+          <label>Daily target (USDT) → bank the day
+            <input type="number" min="0" step="1" data-live="dailyTarget" value="${l.dailyTarget}"></label>
           <label>Reinvest profit
             <select data-live="compound">${opt('1', l.compound ? '1' : '0', 'On — budget grows with profit, shrinks with loss')}${opt('0', l.compound ? '1' : '0', 'Off — fixed budget')}</select></label>
         </div>
         <div class="presets">
+          <button class="ghost ${isRecommended(l) ? 'on-profile' : ''}" data-act="live-recommended">${isRecommended(l) ? '✓ RECOMMENDED ON' : '★ Recommended'}: $300 · 3× · 8 coins · reinvest · bank $10/day · 20% loss limit</button>
           <button class="ghost ${isAggressive(l) ? 'on-profile' : ''}" data-act="live-aggressive">${isAggressive(l) ? '✓ AGGRESSIVE ON' : '⚡ Aggressive'}: $300 (≈₹25k) · 5× · 8 coins · reinvest · 20% loss limit</button>
           <button class="ghost" data-act="live-check">Check connection</button>
           <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
@@ -319,6 +322,12 @@ export class Dashboard {
               ? `<span class="dim">after 3 h</span> <span class="dim small">running ${(days * 24).toFixed(1)} h — too early to project</span>`
               : `<span class="${cls(total)}">${signed(total / days)}</span> <span class="dim small">over ${days < 1 ? `${(days * 24).toFixed(1)} h` : `${days.toFixed(1)} days`}</span>`,
           )}
+          ${stat(
+            'Today',
+            `<span class="${cls(lv.today)}">${signed(lv.today)}</span> <span class="dim small">${
+              lv.locked ? '🔒 target hit — banked, only selling' : lv.cfg.dailyTarget > 0 ? `target ${usd(lv.cfg.dailyTarget)}` : 'no target'
+            }</span>`,
+          )}
           ${stat('Wallet', `${usd(lv.wallet)} <span class="dim small">${signed(pnl)} realized</span>`)}
           ${stat('Held coins now', `<span class="${cls(lv.unrealized)}">${signed(lv.unrealized)}</span>`)}
           ${stat('Round trips', `${lv.roundTrips} <span class="dim small">booked ${signed(lv.realized)}</span>`)}
@@ -344,6 +353,14 @@ export class Dashboard {
         c.resetStats();
         this.engine.resetCounters();
         this.renderTab(true);
+      } else if (act === 'live-recommended') {
+        // 3x is the only live setting that has made real money so far; classic take-profit; bank $10 a day.
+        Object.assign(s, { maxCapital: 300, leverage: 3, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 10 });
+        saveLiveSettings(s);
+        const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
+        this.engine.updateSettings({ ...PRESETS.live, grid: { ...PRESETS.live.grid!, ...fees, classicTp: true } });
+        this.renderTab(true);
+        this.renderLiveStatus(c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start');
       } else if (act === 'live-aggressive') {
         // Real-week Arena: 5x made +10% to +23% a week on 15 coins, with drops of 14-20% along the way.
         Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true });
@@ -624,6 +641,7 @@ ${this.liveCardView()}
       else if (lk === 'dailyLossLimit') l.dailyLossLimit = Math.min(0.5, Math.max(0.01, Number(v) / 100));
       else if (lk === 'maxCapital') l.maxCapital = Math.max(10, Number(v) || 100);
       else if (lk === 'compound') l.compound = v === '1';
+      else if (lk === 'dailyTarget') l.dailyTarget = Math.max(0, Number(v) || 0);
       else l[lk] = Number(v);
       saveLiveSettings(l);
       return;
@@ -741,6 +759,10 @@ function stat(label: string, value: string): string {
 }
 
 /** The one-click aggressive profile is active (so its button can show it). */
+function isRecommended(l: LiveSettings): boolean {
+  return l.maxCapital === 300 && l.leverage === 3 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound && l.dailyTarget === 10;
+}
+
 function isAggressive(l: LiveSettings): boolean {
   return l.maxCapital === 300 && l.leverage === 5 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound;
 }

@@ -30,14 +30,26 @@ export interface LiveConfig {
   maxCapital: number; // USDT the bot may use, whatever the wallet holds
   leverage: number;
   maxCoins: number;
-  dailyLossLimit: number; // fraction of starting wallet; breach = kill switch
+  dailyLossLimit: number; // fraction of the trading budget; losing this much = kill switch
   makerFee: number;
   cooldownMs: number; // after a coin is stopped out
   /** Reinvest: budget = starting budget + profit so far (losses shrink it the same way). */
   compound: boolean;
+  /** Bank the day: once today's result reaches this many USDT, stop buying until tomorrow (UTC). 0 = off. */
+  dailyTarget: number;
 }
 
-export const DEFAULT_LIVE: LiveConfig = { maxCapital: 100, leverage: 3, maxCoins: 5, dailyLossLimit: 0.1, makerFee: 0.0002, cooldownMs: 30 * 60_000, compound: false };
+// A coin that hit its stop is usually still falling: stay out of it for 4 hours, not 30 minutes.
+export const DEFAULT_LIVE: LiveConfig = {
+  maxCapital: 100,
+  leverage: 3,
+  maxCoins: 5,
+  dailyLossLimit: 0.1,
+  makerFee: 0.0002,
+  cooldownMs: 4 * 3_600_000,
+  compound: false,
+  dailyTarget: 0,
+};
 
 interface Level {
   lvl: number;
@@ -72,6 +84,9 @@ export interface LiveSnapshot {
   realized: number;
   since?: number;
   baseBudget?: number;
+  dayKey?: string;
+  dayStart?: number;
+  locked?: boolean;
   coins: LiveCoin[];
   cooldown: [string, number][];
 }
@@ -96,6 +111,11 @@ export class LiveGrid {
   /** When this run began (kept across resumes), for a per-day rate. */
   since = 0;
   lastError = '';
+  /** Today's result (UTC day) and whether the daily target has been banked. */
+  today = 0;
+  locked = false;
+  private dayKey = '';
+  private dayStart = 0;
   /** How many coins were picked back up from a saved snapshot at start. */
   resumed = 0;
   private startedAt = 0;
@@ -157,6 +177,9 @@ export class LiveGrid {
     this.roundTrips = 0;
     this.realized = 0;
     this.since = this.now();
+    this.dayStart = this.startWallet;
+    this.today = 0;
+    this.locked = false;
     this.host.log('info', `LIVE count reset to zero · equity $${this.startWallet.toFixed(2)}`);
   }
 
@@ -169,6 +192,9 @@ export class LiveGrid {
       realized: this.realized,
       since: this.since,
       baseBudget: this.baseBudget,
+      dayKey: this.dayKey,
+      dayStart: this.dayStart,
+      locked: this.locked,
       coins: [...this.coins.values()],
       cooldown: [...this.cooldown],
     };
@@ -180,6 +206,9 @@ export class LiveGrid {
     this.roundTrips = s.roundTrips ?? 0;
     this.realized = s.realized ?? 0;
     this.since = s.since ?? s.savedAt ?? 0;
+    this.dayKey = s.dayKey ?? '';
+    this.dayStart = s.dayStart ?? 0;
+    this.locked = s.locked ?? false;
     this.cooldown = new Map(s.cooldown ?? []);
     for (const c of s.coins ?? []) {
       if (!this.rules[c.symbol] || !c.levels?.length) continue;
@@ -230,6 +259,28 @@ export class LiveGrid {
     }
   }
 
+  /**
+   * Daily target: when today's result (equity change since UTC midnight) reaches it, cancel every resting
+   * buy and only let take-profits finish, so a good day can't turn red later. A new day unlocks it.
+   */
+  private async trackDay(equity: number) {
+    const key = new Date(this.now()).toISOString().slice(0, 10);
+    if (key !== this.dayKey) {
+      if (this.dayKey && this.locked) this.host.log('info', `LIVE new day — target lock released, buying again`);
+      this.dayKey = key;
+      this.dayStart = equity;
+      this.locked = false;
+    }
+    this.today = equity - this.dayStart;
+    if (this.locked || !(this.cfg.dailyTarget > 0) || this.today < this.cfg.dailyTarget) return;
+    this.locked = true;
+    for (const c of this.coins.values())
+      for (const l of c.levels)
+        // Keep the id: the next sync sees whether it was cancelled clean or filled first (then it gets its take-profit).
+        if (l.side === 'buy' && l.orderId !== undefined) await this.ex.cancel(c.symbol, l.orderId).catch(() => undefined);
+    this.host.log('pass', `🔒 LIVE daily target hit: +$${this.today.toFixed(2)} today — buys cancelled, only take-profits until tomorrow`);
+  }
+
   /** Per-coin notional (margin × leverage). */
   slice(): number {
     return (this.budget * this.cfg.leverage) / this.cfg.maxCoins;
@@ -260,12 +311,16 @@ export class LiveGrid {
           const equity = this.wallet + open;
           this.budget = Math.max(10, Math.min(this.baseBudget + (equity - this.startWallet), equity));
         }
-        // Judge the loss limit on equity (wallet + held coins), so a deep dip counts before it is sold.
-        if (this.wallet + open < this.startWallet * (1 - this.cfg.dailyLossLimit)) {
+        const equity = this.wallet + open;
+        // The loss limit is a share of the trading BUDGET (20% of $300 = $60), not of the whole wallet, and is
+        // judged on equity (wallet + held coins) so a deep dip counts before it is sold.
+        const maxLoss = this.baseBudget * this.cfg.dailyLossLimit;
+        if (equity < this.startWallet - maxLoss) {
           this.busy = false;
-          await this.kill(`loss limit: equity $${(this.wallet + open).toFixed(2)} vs start $${this.startWallet.toFixed(2)}`);
+          await this.kill(`loss limit: down $${(this.startWallet - equity).toFixed(2)} (limit $${maxLoss.toFixed(2)})`);
           return;
         }
+        await this.trackDay(equity);
       }
       this.px = await this.ex.prices();
       // One cheap per-coin query each instead of the all-symbols one, so the loop can run every ~1.5 s.
@@ -298,14 +353,14 @@ export class LiveGrid {
           continue;
         }
         // Trail the ladder up when flat and price has left it behind (at most every 20 s).
-        if (!holding && px > c.center * (1 + c.genome.spacing) && this.now() - c.lastTrail > 20_000) {
+        if (!this.locked && !holding && px > c.center * (1 + c.genome.spacing) && this.now() - c.lastTrail > 20_000) {
           await this.ex.cancelAll(c.symbol);
           this.lay(c, champ?.genome ?? c.genome, px);
           c.lastTrail = this.now();
         }
       }
 
-      if (!stressed) await this.allocate(candidates);
+      if (!stressed && !this.locked) await this.allocate(candidates);
       for (const c of this.coins.values()) await this.place(c);
       for (const c of this.coins.values()) await this.protect(c);
       this.lastError = '';
@@ -412,6 +467,7 @@ export class LiveGrid {
     if (!px) return;
     for (const l of c.levels) {
       if (l.orderId !== undefined) continue;
+      if (this.locked && l.side === 'buy') continue; // day banked: only take-profits
       // After repeated real rejections, back off for 5 minutes — but never give up on a level for good
       // (a take-profit that is never re-placed would leave coins bought and unsold).
       if (l.fails >= 5 && this.now() - (l.lastFail ?? 0) < 5 * 60_000) continue;

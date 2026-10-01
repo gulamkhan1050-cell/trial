@@ -173,7 +173,7 @@ describe('LiveGrid on a mock exchange', () => {
     ex.setPrice('DOGEUSDT', 0.1);
     await live.start();
     await live.tick();
-    ex.wallet -= 20; // lost 20% of the starting wallet (limit 10%)
+    ex.wallet -= 20; // lost 20% of the $100 budget (limit 10%)
     advance(31_000);
     await live.tick();
     expect(live.killed).toBe(true);
@@ -423,5 +423,49 @@ describe('LiveGrid count reset', () => {
     expect(live.realized).toBe(0);
     expect(live.wallet - live.startWallet + live.unrealized).toBeCloseTo(0, 9);
     expect((await ex.openOrders()).map((o) => o.orderId).sort()).toEqual(orders);
+  });
+});
+
+describe('LiveGrid daily target and loss limit', () => {
+  it('banks the day: once the target is hit, resting buys are cancelled and only take-profits run', async () => {
+    const ex = new MockExchange(RULES, 100);
+    let now = Date.UTC(2026, 9, 1, 8);
+    const host: LiveHost = { candidates: () => [{ symbol: 'DOGEUSDT', genome: G, score: 0.05 }], stressed: () => false, log: () => undefined };
+    const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, leverage: 3, maxCoins: 5, dailyTarget: 2 }, Object.keys(RULES), () => now);
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985); // L1 bought → take-profit resting
+    now += 31_000;
+    await live.tick();
+    expect(live.locked).toBe(false);
+    ex.wallet += 3; // the day is up $3 (target $2)
+    now += 31_000;
+    await live.tick();
+    expect(live.locked).toBe(true);
+    await live.tick();
+    const open = await ex.openOrders();
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.every((o) => o.side === 'SELL')).toBe(true); // buys gone, the take-profit stays
+    // Next UTC day: unlocked, buying again.
+    now += 24 * 3_600_000;
+    await live.tick();
+    expect(live.locked).toBe(false);
+    await live.tick();
+    expect((await ex.openOrders()).some((o) => o.side === 'BUY')).toBe(true);
+  });
+
+  it('measures the loss limit against the trading budget, not a big wallet', async () => {
+    const ex = new MockExchange(RULES, 5000); // demo wallet $5,000, bot budget $100
+    let now = 1_000_000;
+    const host: LiveHost = { candidates: () => [{ symbol: 'DOGEUSDT', genome: G, score: 0.05 }], stressed: () => false, log: () => undefined };
+    const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, dailyLossLimit: 0.1 }, Object.keys(RULES), () => now);
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.wallet -= 15; // $15 down = 15% of the $100 budget (only 0.3% of the wallet)
+    now += 31_000;
+    await live.tick();
+    expect(live.killed).toBe(true);
   });
 });

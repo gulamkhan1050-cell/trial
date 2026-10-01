@@ -84,7 +84,7 @@ async function main() {
     const total = live.wallet - live.startWallet + live.unrealized;
     const days = Math.max((Date.now() - live.since) / 86_400_000, 1 / 24);
     say(
-      `TOTAL ${money(total)} (${money(total / days)}/day) · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · budget $${live.budget.toFixed(0)} · ${coins.join('  ') || 'waiting for FORGE'}`,
+       `TOTAL ${money(total)} (${money(total / days)}/day) · today ${money(live.today)}${live.locked ? ' 🔒 banked' : ''} · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · budget $${live.budget.toFixed(0)} · ${coins.join('  ') || 'waiting for FORGE'}`,
     );
     engine.save();
   }, 60_000);
@@ -132,6 +132,7 @@ async function config(): Promise<LiveSettings> {
     maxCoins: +(await ask('Max coins at once', String(DEFAULT_LIVE_SETTINGS.maxCoins))),
     dailyLossLimit: +(await ask('Loss limit (fraction of wallet, 0.2 = 20%)', String(DEFAULT_LIVE_SETTINGS.dailyLossLimit))),
     compound: (await ask('Reinvest profit? y/n', 'y')).toLowerCase().startsWith('y'),
+    dailyTarget: +(await ask('Daily target USDT (stop buying once reached, 0 = off)', String(DEFAULT_LIVE_SETTINGS.dailyTarget))),
   };
   if (network === 'mainnet' && (await ask('REAL MONEY. Type YES to confirm', 'no')) !== 'YES') fail('cancelled');
   rl.close();
