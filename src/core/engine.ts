@@ -158,7 +158,12 @@ export class Engine {
   private listeners = new Set<() => void>();
 
   /** `seed` makes FORGE's random search repeatable (the Arena and tests pass one). */
-  constructor(settings: Settings = loadSettings(), seed = Date.now() % 1e9) {
+  /** `ns` keeps this engine's saved book and champions apart from other engines' (the Live Race runs several). */
+  constructor(
+    settings: Settings = loadSettings(),
+    seed = Date.now() % 1e9,
+    private ns = '',
+  ) {
     this.rand = mulberry32(seed);
     this.settings = settings;
     const idle = (text: string): AgentStatus => ({ busy: false, text, at: 0 });
@@ -873,7 +878,7 @@ export class Engine {
   }
 
   private storeKey(): string {
-    return `swarmdesk:book:${this.settings.feed}`;
+    return `swarmdesk:${this.ns}book:${this.settings.feed}`;
   }
 
   save() {
@@ -916,13 +921,13 @@ export class Engine {
   private saveChampions() {
     const champs: Record<string, Scored> = {};
     for (const s of this.symbols.values()) if (s.evolver.champion) champs[s.symbol] = s.evolver.champion;
-    store(`swarmdesk:champions:${this.settings.feed}`, champs);
+    store(`swarmdesk:${this.ns}champions:${this.settings.feed}`, champs);
   }
 
   /** Resume with last session's champions in the gene pool (they must re-pass the gate). */
   private seedChampions() {
     if (this.settings.feed !== 'binance') return;
-    const champs = load<Record<string, Scored>>(`swarmdesk:champions:${this.settings.feed}`);
+    const champs = load<Record<string, Scored>>(`swarmdesk:${this.ns}champions:${this.settings.feed}`);
     if (!champs) return;
     for (const [sym, c] of Object.entries(champs)) {
       const s = this.symbols.get(sym);

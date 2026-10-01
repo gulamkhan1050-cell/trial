@@ -4,11 +4,13 @@ import type { AgentId } from '../core/types';
 import { barsChart, candleChart, lineChart } from './charts';
 import { type LiveController, type LiveSettings, loadLiveSettings, saveLiveSettings } from '../exchange/liveController';
 import { type ArenaProgress, type ArenaResult, gridVariants, runArenaRepeated } from '../core/arena';
+import { LiveRace, RACE_BALANCE, RACE_LOSS_LIMIT, RACE_SPECS } from '../core/race';
 
-type Tab = 'grid' | 'log' | 'arena' | 'setup';
+type Tab = 'grid' | 'race' | 'log' | 'arena' | 'setup';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'grid', label: 'Live' },
+  { id: 'race', label: 'Race' },
   { id: 'log', label: 'Trades' },
   { id: 'arena', label: 'Arena' },
   { id: 'setup', label: 'Setup' },
@@ -51,6 +53,8 @@ export class Dashboard {
   } = { repeats: 3, variants: true, running: false, progress: null, results: null, note: '', error: '', signal: { cancelled: false }, source: 'real', days: 7, markets: 15, leverage: 3, thorough: true };
 
   private liveSettings: LiveSettings = loadLiveSettings();
+  /** Several systems trading side by side on the same live prices. */
+  private race: LiveRace;
   /** Coin-picker (paper simulation) details on the Live tab: hidden unless asked for. */
   private pickerOpen = false;
 
@@ -66,6 +70,9 @@ export class Dashboard {
     } catch {
       /* ignore */
     }
+    this.race = new LiveRace(() => this.engine.settings, undefined, undefined, () => this.schedule());
+    // A race that was running when the app closed carries on (each racer's book is saved).
+    if (this.race.wasRunning) void this.race.start();
     this.mount();
     engine.onChange(() => this.schedule());
     window.addEventListener('resize', () => this.schedule());
@@ -109,7 +116,7 @@ export class Dashboard {
       this.renderArenaLive();
       return;
     }
-    const html = this.tab === 'grid' ? this.gridView() : this.logView();
+    const html = this.tab === 'grid' ? this.gridView() : this.tab === 'race' ? this.raceView() : this.logView();
     this.body.innerHTML = html;
     this.drawCharts();
   }
@@ -247,6 +254,49 @@ export class Dashboard {
         <h3>Execution log <span class="dim">all markets</span></h3>
         ${this.logList(14)}
       </section>`;
+  }
+
+  // ------------------------------------------------------------ RACE
+
+  private raceView(): string {
+    const r = this.race;
+    const rows = r.standings();
+    const hours = r.startedAt ? (Date.now() - r.startedAt) / 3_600_000 : 0;
+    const table = rows.length
+      ? `<table class="grid race"><thead><tr><th>#</th><th>SYSTEM</th><th>RESULT</th><th>TODAY</th><th>PER DAY</th><th>ROUND TRIPS</th><th>WIN</th><th>WORST DROP</th><th>NOW</th><th></th></tr></thead><tbody>${rows
+          .map((x, i) => {
+            const perDay = hours >= 3 ? signed(x.pnl / (hours / 24)) : '<span class="dim">after 3 h</span>';
+            return `<tr><td>${i === 0 && x.pnl > 0 ? '🏆' : i + 1}</td>
+              <td><b style="color:var(${ARENA_COLORS[RACE_SPECS.indexOf(x.racer.spec)]})">${esc(x.racer.spec.name)}</b><br><small class="dim">${esc(x.racer.spec.note)}</small></td>
+              <td class="mono ${cls(x.pnl)}">${signed(x.pnl)}<br><small>${pct(x.pnl / RACE_BALANCE, 2)}</small></td>
+              <td class="mono ${cls(x.today)}">${signed(x.today)}</td>
+              <td class="mono">${perDay}</td>
+              <td class="mono">${x.trips}</td>
+              <td class="mono">${pct(x.winRate)}</td>
+              <td class="mono">${pct(x.maxDd, 1)}</td>
+              <td class="small">${x.racer.out ? `<span class="down">${esc(x.racer.out)}</span>` : `${x.armed} armed · ${x.holding} holding`}</td>
+              <td><button class="ghost" data-act="race-use" data-id="${x.racer.spec.id}">Use for live</button></td></tr>`;
+          })
+          .join('')}</tbody></table>`
+      : '<p class="empty">Press ▶ Start race. Every system gets $300 of paper money and trades the same live Binance prices.</p>';
+    return `
+      <section class="card">
+        <h3>Live race <span class="dim">same live prices · $${RACE_BALANCE} each · ${Math.round(RACE_LOSS_LIMIT * 100)}% loss limit retires a system</span></h3>
+        <p class="small">${RACE_SPECS.length} complete systems trade side by side, in real time, on the same Binance prices — each with its own paper account,
+        its own coin picker and the same rules as the live bot. Leave it running a day or more; the one that earns most with a bearable worst drop goes on real money.</p>
+        <p class="small dim">${r.running ? `● running for ${hours < 1 ? `${Math.round(hours * 60)} min` : `${hours.toFixed(1)} h`}` : r.startedAt ? 'paused — press Start to continue' : 'not started'}${r.error ? ` · <span class="down">${esc(r.error)}</span>` : ''}
+        · paper fills are a little optimistic, but every system gets the same treatment.</p>
+        <div class="presets">
+          <button class="ghost primary" data-act="race-toggle">${r.running ? '■ Pause race' : '▶ Start race'}</button>
+          <button class="danger" data-act="race-reset">↺ Restart race from zero</button>
+        </div>
+      </section>
+      <section class="card">
+        <h3>Leaderboard <span class="dim">best result first</span></h3>
+        ${table}
+      </section>
+      ${rows.length ? `<section class="card"><h3>Money over time</h3><canvas id="c-race" class="chart tall"></canvas>
+        <p class="legend">${RACE_SPECS.map((s, i) => `<i style="background:var(${ARENA_COLORS[i]})"></i>${esc(s.name)}`).join(' ')}</p></section>` : ''}`;
   }
 
   // ------------------------------------------------------------ LIVE (real money)
@@ -631,6 +681,22 @@ ${this.liveCardView()}
       else void this.engine.start();
     } else if (el.dataset.act?.startsWith('live-')) {
       void this.liveAction(el.dataset.act);
+    } else if (el.dataset.act === 'race-toggle') {
+      if (this.race.running) this.race.stop();
+      else void this.race.start();
+      this.renderTab(true);
+    } else if (el.dataset.act === 'race-reset') {
+      if (confirm('Restart the race? Every system goes back to $300 and the clock restarts.')) this.race.reset();
+      this.renderTab(true);
+    } else if (el.dataset.act === 'race-use') {
+      const spec = RACE_SPECS.find((x) => x.id === el.dataset.id);
+      if (spec && confirm(`Use ${spec.name} (${spec.note}) for live trading?\n\nLeverage ${spec.grid.leverage}×. Press Start live trading in Setup afterwards (orders are kept).`)) {
+        this.liveSettings.leverage = spec.grid.leverage ?? this.liveSettings.leverage;
+        saveLiveSettings(this.liveSettings);
+        this.engine.updateSettings({ grid: { ...this.engine.settings.grid, ...spec.grid } });
+        this.tab = 'setup';
+        this.renderTab(true);
+      }
     } else if (el.dataset.act === 'picker') {
       this.pickerOpen = !this.pickerOpen;
       this.renderTab(true);
@@ -747,6 +813,15 @@ ${this.liveCardView()}
       lineChart(gfC, [{ values: h.map((x) => Math.max(-0.05, x.best)), color: '--up', fill: true }], (v) => `${(v * 100).toFixed(2)}%`, 0);
     }
 
+    const rC = q('c-race');
+    if (rC && this.race.racers.length) {
+      lineChart(
+        rC,
+        this.race.racers.map((r, i) => ({ values: [...r.engine.equity.map((p) => p.v), r.engine.totalEquity()], color: ARENA_COLORS[i], width: 2 })),
+        (v) => `$${v.toFixed(0)}`,
+        RACE_BALANCE,
+      );
+    }
     const tC = q('c-trades');
     if (tC) {
       const tr = [...e.trades].slice(0, 60).reverse();
