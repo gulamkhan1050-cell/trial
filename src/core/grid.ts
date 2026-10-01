@@ -31,6 +31,8 @@ export function takeProfitSteps(g: GridGenome, lvl: number): number {
 /** FORGE options: `classicTp` pins every grid to the old one-step take-profit (for A/B tests). */
 export interface GridForgeOptions {
   classicTp?: boolean;
+  /** Cap the grid step (e.g. 0.006): tighter ladders fill more often — more, smaller round trips. */
+  maxSpacing?: number;
 }
 
 export interface GridFees {
@@ -275,8 +277,9 @@ export interface GridForge {
 const RANGES = { spacing: [0.0008, 0.012], levels: [3, 16], stop: [0.004, 0.05], tp: [1, 3], deep: [0, 0.6] } as const;
 const POP = 30;
 
-function clampG(g: GridGenome): GridGenome {
-  g.spacing = Math.round(Math.max(RANGES.spacing[0], Math.min(RANGES.spacing[1], g.spacing)) * 1e5) / 1e5;
+function clampG(g: GridGenome, opt: GridForgeOptions = {}): GridGenome {
+  const maxStep = Math.max(RANGES.spacing[0], Math.min(RANGES.spacing[1], opt.maxSpacing ?? RANGES.spacing[1]));
+  g.spacing = Math.round(Math.max(RANGES.spacing[0], Math.min(maxStep, g.spacing)) * 1e5) / 1e5;
   g.levels = Math.round(Math.max(RANGES.levels[0], Math.min(RANGES.levels[1], g.levels)));
   g.stop = Math.round(Math.max(RANGES.stop[0], Math.min(RANGES.stop[1], g.stop)) * 1e4) / 1e4;
   g.tp = Math.round(Math.max(RANGES.tp[0], Math.min(RANGES.tp[1], g.tp ?? 1)) * 100) / 100;
@@ -290,7 +293,7 @@ export function randomGridGenome(rand: () => number, opt: GridForgeOptions = {})
   const spacing = Math.exp(Math.log(RANGES.spacing[0]) + rand() * Math.log(RANGES.spacing[1] / RANGES.spacing[0]));
   // Half the random grids start with the classic one-step take-profit, half with a smart one.
   const smart = !opt.classicTp && rand() < 0.5;
-  return clampG({ id: uid('G'), spacing, levels: pick(RANGES.levels), stop: pick(RANGES.stop), tp: smart ? pick(RANGES.tp) : 1, deep: smart ? pick(RANGES.deep) : 0 });
+  return clampG({ id: uid('G'), spacing, levels: pick(RANGES.levels), stop: pick(RANGES.stop), tp: smart ? pick(RANGES.tp) : 1, deep: smart ? pick(RANGES.deep) : 0 }, opt);
 }
 
 function pinClassic(g: GridGenome, opt: GridForgeOptions): GridGenome {
@@ -310,7 +313,7 @@ function mutateGrid(a: GridGenome, b: GridGenome, rand: () => number, opt: GridF
     tp: ((rand() < 0.5 ? a : b).tp ?? 1) + gauss(rand) * 0.2,
     deep: ((rand() < 0.5 ? a : b).deep ?? 0) + gauss(rand) * 0.05,
   };
-  return pinClassic(clampG(g), opt);
+  return pinClassic(clampG(g, opt), opt);
 }
 
 export function newGridForge(rand: () => number, opt: GridForgeOptions = {}): GridForge {
@@ -331,7 +334,7 @@ export function gridPasses(s: GridScored, slack = 0): boolean {
 const rankOf = (s: GridScored) => (s.train.fitness < 0 || s.test.fitness < 0 ? Math.min(s.train.fitness, s.test.fitness) : 0.4 * s.train.fitness + 0.6 * s.test.fitness);
 
 export function stepGridForge(f: GridForge, candles: Candle[], fees: GridFees, rand: () => number, opt: GridForgeOptions = {}): GridForge {
-  const pop = opt.classicTp ? f.population.map((g) => pinClassic({ ...g }, opt)) : f.population;
+  const pop = opt.classicTp || opt.maxSpacing ? f.population.map((g) => pinClassic(clampG({ ...g }, opt), opt)) : f.population;
   const scored = pop.map((g) => scoreGrid(g, candles, fees)).sort((a, b) => rankOf(b) - rankOf(a));
   const passed = scored.filter((s) => gridPasses(s));
   let champion = f.champion ? scoreGrid(f.champion.genome, candles, fees) : null;

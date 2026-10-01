@@ -48,3 +48,16 @@ describe('Engine.resetCounters', () => {
     expect(e.totalEquity() - e.startBalance).toBe(0);
   });
 });
+
+describe('daily target (bank the day)', () => {
+  it('stops laying new ladders once today is up by the target', () => {
+    const e = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', symbols: ['BTCUSDT'], grid: { ...DEFAULT_SETTINGS.grid, dailyTarget: 20 } }, 1);
+    e.dayStartEquity = e.totalEquity();
+    expect(e.dayBanked()).toBe(false);
+    e.balance += 25;
+    expect(e.dayBanked()).toBe(true);
+    const off = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', symbols: ['BTCUSDT'] }, 1);
+    off.balance += 500;
+    expect(off.dayBanked()).toBe(false);
+  });
+});

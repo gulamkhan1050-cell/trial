@@ -4,7 +4,7 @@ import { DEFAULT_HAWK, type HawkConfig, manage, plan, unrealized } from '../agen
 import { PaperBroker } from './broker';
 import { DEFAULT_EVOLVER, type EvolverState, newEvolver, type Scored, step } from './evolver';
 import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, ReplayFeed, SimFeed } from './market';
-import { DEFAULT_GRID_FEES, type GridFill, type GridForge, GridBot, type GridGenome, type GridState, gridSafe, newGridForge, stepGridForge } from './grid';
+import { DEFAULT_GRID_FEES, type GridFill, type GridForge, type GridForgeOptions, GridBot, type GridGenome, type GridState, gridSafe, newGridForge, stepGridForge } from './grid';
 
 export interface GridSlot {
   symbol: string;
@@ -19,8 +19,8 @@ export interface GridSlot {
   regime?: RegimeRead; // SCOUT's latest read of the coin: up / chop / down
 }
 
-function newSlot(symbol: string, rand: () => number, classicTp = false): GridSlot {
-  return { symbol, forge: newGridForge(rand, { classicTp }), bot: null, roundTrips: 0, last: 0, wait: 0, orphan: 0, trails: 0, why: '' };
+function newSlot(symbol: string, rand: () => number, opt: GridForgeOptions = {}): GridSlot {
+  return { symbol, forge: newGridForge(rand, opt), bot: null, roundTrips: 0, last: 0, wait: 0, orphan: 0, trails: 0, why: '' };
 }
 import { mulberry32, uid } from './rng';
 import { type RegimeRead, breadth, readRegime } from './regime';
@@ -49,6 +49,12 @@ export interface Settings {
     crashShare: number; // guard fires when at least this share of markets are dumping
     /** Read each coin's trend/volume regime: no new long ladder in a downtrend. */
     regime?: boolean;
+    /** Boost: split the bank into this many coin slices instead of one per coin (bigger orders, more risk). */
+    slices?: number;
+    /** Cap FORGE's grid step (fraction) so ladders fill more often. */
+    maxSpacing?: number;
+    /** Bank the day: once today's paper result reaches this many dollars, lay no new ladders until tomorrow. */
+    dailyTarget?: number;
     /** Pin grids to the old one-step take-profit (A/B baseline); off = FORGE may evolve a smart take-profit. */
     classicTp?: boolean;
   };
@@ -201,7 +207,7 @@ export class Engine {
     const kept = this.grids;
     this.grids = new Map();
     for (const sym of this.settings.symbols) {
-      this.grids.set(sym, { ...newSlot(sym, this.rand, this.settings.grid.classicTp), bot: kept.get(sym)?.bot ?? null, roundTrips: kept.get(sym)?.roundTrips ?? 0 });
+      this.grids.set(sym, { ...newSlot(sym, this.rand, this.forgeOptions()), bot: kept.get(sym)?.bot ?? null, roundTrips: kept.get(sym)?.roundTrips ?? 0 });
     }
     this.symbols.clear();
     for (const s of this.settings.symbols) {
@@ -376,6 +382,16 @@ export class Engine {
 
   gridMode(): boolean {
     return this.settings.strategy === 'grid';
+  }
+
+  private forgeOptions(): GridForgeOptions {
+    return { classicTp: this.settings.grid.classicTp, maxSpacing: this.settings.grid.maxSpacing };
+  }
+
+  /** Today's result has reached the daily target: no new ladders until the day rolls over. */
+  dayBanked(): boolean {
+    const t = this.settings.grid.dailyTarget ?? 0;
+    return t > 0 && this.totalEquity() - (this.dayStartEquity || this.startBalance) >= t;
   }
 
   /** Share of coins not in a downtrend (1 = every coin healthy). */
@@ -717,6 +733,11 @@ export class Engine {
       bot.disarm();
       this.say('SENTRY', 'veto', `✕ ${s.symbol} grid stood aside — ${g.regime!.why}`);
     }
+    // Daily target reached: let held coins finish, but put no fresh ladders to work today.
+    if (bot?.armed && flat && this.dayBanked()) {
+      bot.disarm();
+      this.say('SENTRY', 'pass', `🔒 ${s.symbol} grid parked — daily target banked`);
+    }
 
     // FORGE retired the strategy: keep working the ladder for a grace period (a retirement is
     // often noise at the pass/fail edge), then stand down once nothing is held.
@@ -741,6 +762,7 @@ export class Engine {
     else if (this.stressWait > 0) why = `crash guard: market-wide sell-off, paused ${this.stressWait} more bars`;
     else if (g.wait > 0) why = `cooldown ${g.wait} bars after stop`;
     else if (down) why = `downtrend — ${g.regime!.why}`;
+    else if (this.dayBanked()) why = `daily target $${this.settings.grid.dailyTarget} banked — back tomorrow`;
     else if (this.dayPnl <= -this.settings.sentry.dailyLossLimit * this.dayStartEquity) why = 'daily loss limit hit';
     else if (!gridSafe(s.candles, s.candles.length - 1, champ.genome)) why = 'selling off too hard for a grid';
     g.why = why;
@@ -750,7 +772,7 @@ export class Engine {
     }
     const genome = champ!.genome;
     // Each market gets an equal slice of the bank, times the grid leverage (perp-style margin).
-    const capital = (this.totalEquity() * Math.max(1, this.settings.grid.leverage)) / Math.max(1, this.grids.size);
+    const capital = (this.totalEquity() * Math.max(1, this.settings.grid.leverage)) / Math.max(1, this.settings.grid.slices ?? this.grids.size);
     g.bot = bot ?? new GridBot(genome, this.gridFees());
     g.bot.genome = genome;
     g.bot.fees = this.gridFees();
@@ -834,7 +856,7 @@ export class Engine {
     const before = g.forge.champion?.genome.id;
     const t0 = performance.now();
     this.agents.FORGE = { busy: true, text: `grid gen ${g.forge.generation + 1} · ${short(g.symbol)}`, at: Date.now() };
-    g.forge = stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand, { classicTp: this.settings.grid.classicTp });
+    g.forge = stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand, this.forgeOptions());
     const f = g.forge;
     const c = f.champion;
     if (c && c.genome.id !== before) {
@@ -914,7 +936,7 @@ export class Engine {
       dayPnl: d.dayPnl ?? 0,
     });
     this.grids = new Map(
-      Object.entries(d.grids ?? {}).map(([sym, x]) => [sym, { ...newSlot(sym, this.rand, this.settings.grid.classicTp), bot: GridBot.restore(x.bot, this.gridFees()), roundTrips: x.roundTrips }]),
+      Object.entries(d.grids ?? {}).map(([sym, x]) => [sym, { ...newSlot(sym, this.rand, this.forgeOptions()), bot: GridBot.restore(x.bot, this.gridFees()), roundTrips: x.roundTrips }]),
     );
   }
 

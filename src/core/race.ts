@@ -18,10 +18,13 @@ export interface RacerSpec {
 export const RACE_BALANCE = 300; // same as the live budget
 export const RACE_LOSS_LIMIT = 0.2; // a racer that loses 20% is flattened and retired
 
+const BOOST = { slices: 8, maxSpacing: 0.006, dailyTarget: 20 };
+
 export const RACE_SPECS: RacerSpec[] = [
-  { id: 'plain3', name: 'PLAIN 3×', note: 'classic grid — green in 6/6 repeated real runs', grid: { leverage: 3, classicTp: true, regime: false } },
-  { id: 'plain5', name: 'PLAIN 5×', note: 'same grid, more risk', grid: { leverage: 5, classicTp: true, regime: false } },
-  { id: 'smart5', name: 'AGGRESSIVE 5×', note: 'smart take-profit + regime (the 5× days)', grid: { leverage: 5, classicTp: false, regime: true } },
+  // BOOST = bigger orders (bank split 8 ways, not 15), tighter steps (≤ 0.6%) for more fills, and bank the day at +$20.
+  { id: 'plain3boost', name: 'PLAIN 3× BOOST', note: 'classic grid · 2× bigger orders · steps ≤0.6% · bank $20/day', grid: { leverage: 3, classicTp: true, regime: false, ...BOOST } },
+  { id: 'plain5', name: 'PLAIN 5×', note: 'classic grid, more risk', grid: { leverage: 5, classicTp: true, regime: false } },
+  { id: 'smart5boost', name: 'AGGRESSIVE 5× BOOST', note: 'smart TP + regime · 2× bigger orders · steps ≤0.6% · bank $20/day', grid: { leverage: 5, classicTp: false, regime: true, ...BOOST } },
   { id: 'smart3', name: 'SMART 3×', note: 'smart take-profit + regime', grid: { leverage: 3, classicTp: false, regime: true } },
 ];
 

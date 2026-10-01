@@ -305,6 +305,7 @@ export class Dashboard {
     const l = this.liveSettings;
     const g = this.engine.settings.grid;
     const recOn = isRecommended(l) && g.classicTp !== false && g.regime === false;
+    const aggOn = isAggressive(l) && g.classicTp !== false && g.regime === false;
     const opt = (v: string | number, cur: string | number, label: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     return `
       <section class="card form live-card">
@@ -334,7 +335,7 @@ export class Dashboard {
         </div>
         <div class="presets">
           <button class="ghost ${recOn ? 'on-profile' : ''}" data-act="live-recommended">${recOn ? '✓ RECOMMENDED ON' : '★ Recommended'}: $300 · 3× classic grid (green 6/6 real runs) · 8 coins · reinvest · bank $10/day · 20% loss limit</button>
-          <button class="ghost ${isAggressive(l) ? 'on-profile' : ''}" data-act="live-aggressive">${isAggressive(l) ? '✓ AGGRESSIVE ON' : '⚡ Aggressive'}: $300 (≈₹25k) · 5× · 8 coins · reinvest · 20% loss limit</button>
+          <button class="ghost ${aggOn ? 'on-profile' : ''}" data-act="live-aggressive">${aggOn ? '✓ AGGRESSIVE ON' : '⚡ Aggressive'}: $300 · 5× classic grid · 8 coins · reinvest · bank $20/day · 20% loss limit</button>
           <button class="ghost" data-act="live-check">Check connection</button>
           <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
           <button class="kill big-kill" data-act="live-kill">■ KILL — cancel all & close positions</button>
@@ -416,10 +417,11 @@ export class Dashboard {
         this.renderLiveStatus(c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start');
       } else if (act === 'live-aggressive') {
         // Real-week Arena: 5x made +10% to +23% a week on 15 coins, with drops of 14-20% along the way.
-        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true });
+        // The setting from the day before yesterday ($300, 5x, 8 coins, classic grid) plus bank the day at $20.
+        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 20 });
         saveLiveSettings(s);
         const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
-        this.engine.updateSettings({ ...PRESETS.live5, grid: { ...PRESETS.live5.grid!, ...fees } });
+        this.engine.updateSettings({ ...PRESETS.live5, grid: { ...PRESETS.live5.grid!, ...fees, classicTp: true, regime: false } });
         this.renderTab(true);
         this.renderLiveStatus(
           c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start',
@@ -856,5 +858,5 @@ function isRecommended(l: LiveSettings): boolean {
 }
 
 function isAggressive(l: LiveSettings): boolean {
-  return l.maxCapital === 300 && l.leverage === 5 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound;
+  return l.maxCapital === 300 && l.leverage === 5 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound && l.dailyTarget === 20;
 }

@@ -36,11 +36,11 @@ describe('Live race', () => {
     expect(race.racers[1].out).toBe('');
     race.stop();
     // Each racer's book is saved under its own key, never the main app's.
-    expect([...mem.keys()].some((k) => k.startsWith('swarmdesk:race:plain3:book'))).toBe(true);
+    expect([...mem.keys()].some((k) => k.startsWith('swarmdesk:race:plain3boost:book'))).toBe(true);
     expect(mem.has('swarmdesk:book:binance')).toBe(false);
 
     race.reset();
     expect(race.racers).toHaveLength(0);
-    expect([...mem.keys()].some((k) => k.startsWith('swarmdesk:race:plain3:book'))).toBe(false);
+    expect([...mem.keys()].some((k) => k.startsWith('swarmdesk:race:plain3boost:book'))).toBe(false);
   }, 30_000);
 });

@@ -157,3 +157,18 @@ describe('smart take-profit', () => {
     expect(f.population.every((g) => (g.tp ?? 1) === 1 && (g.deep ?? 0) === 0)).toBe(true);
   });
 });
+
+describe('boost options', () => {
+  it('FORGE with maxSpacing never breeds a step wider than the cap', async () => {
+    const { newGridForge, stepGridForge } = await import('../src/core/grid');
+    const { mulberry32 } = await import('../src/core/rng');
+    const rand = mulberry32(11);
+    const candles = Array.from({ length: 700 }, (_, i) => {
+      const c = 100 * (1 + 0.01 * Math.sin(i / 9));
+      return { t: i * 60_000, o: c, h: c * 1.002, l: c * 0.998, c, v: 1 };
+    });
+    let f = newGridForge(rand, { maxSpacing: 0.006 });
+    for (let i = 0; i < 3; i++) f = stepGridForge(f, candles, { maker: 0.0002, taker: 0.0005 }, rand, { maxSpacing: 0.006 });
+    expect(f.population.every((g) => g.spacing <= 0.006)).toBe(true);
+  });
+});
