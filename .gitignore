@@ -1,0 +1,19 @@
+node_modules/
+dist/
+dist-bot/
+# Headless bot: API keys and state stay on the device
+bot.config.json
+bot-state.json
+bot-state.json.tmp
+*.log
+.DS_Store
+# Android build outputs
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/public/
+android/capacitor-cordova-android-plugins/
+*.apk
+*.aab
+*.keystore
