@@ -306,6 +306,7 @@ export class Dashboard {
     const g = this.engine.settings.grid;
     const recOn = isRecommended(l) && g.classicTp !== false && g.regime === false;
     const aggOn = isAggressive(l) && g.classicTp !== false && g.regime === false;
+    const boostOn = isBoost(l) && g.classicTp === false && g.regime === true && g.maxSpacing === 0.006;
     const opt = (v: string | number, cur: string | number, label: string) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${label}</option>`;
     return `
       <section class="card form live-card">
@@ -330,11 +331,14 @@ export class Dashboard {
             <input type="number" min="1" max="50" data-live="dailyLossLimit" value="${pctInput(l.dailyLossLimit)}"></label>
           <label>Daily target (USDT) → bank the day
             <input type="number" min="0" step="1" data-live="dailyTarget" value="${l.dailyTarget}"></label>
+          <label>When the daily target is hit
+            <select data-live="afterTarget">${opt('restart', l.afterTarget, 'Take profit & restart — sell all, start a new round')}${opt('pause', l.afterTarget, 'Pause — only sell until tomorrow')}</select></label>
           <label>Reinvest profit
             <select data-live="compound">${opt('1', l.compound ? '1' : '0', 'On — budget grows with profit, shrinks with loss')}${opt('0', l.compound ? '1' : '0', 'Off — fixed budget')}</select></label>
         </div>
         <div class="presets">
           <button class="ghost ${recOn ? 'on-profile' : ''}" data-act="live-recommended">${recOn ? '✓ RECOMMENDED ON' : '★ Recommended'}: $300 · 3× classic grid (green 6/6 real runs) · 8 coins · reinvest · bank $10/day · 20% loss limit</button>
+          <button class="ghost ${boostOn ? 'on-profile' : ''}" data-act="live-boost">${boostOn ? '✓ BOOST ON' : '🚀 Aggressive BOOST'}: $300 · 5× · smart TP + regime · steps ≤0.6% · 8 coins · take $24 & restart · 20% loss limit</button>
           <button class="ghost ${aggOn ? 'on-profile' : ''}" data-act="live-aggressive">${aggOn ? '✓ AGGRESSIVE ON' : '⚡ Aggressive'}: $300 · 5× classic grid · 8 coins · reinvest · bank $20/day · 20% loss limit</button>
           <button class="ghost" data-act="live-check">Check connection</button>
           <button class="ghost primary" data-act="live-start">▶ Start live trading</button>
@@ -379,7 +383,11 @@ export class Dashboard {
           ${stat(
             'Today',
             `<span class="${cls(lv.today)}">${signed(lv.today)}</span> <span class="dim small">${
-              lv.locked ? '🔒 target hit — banked, only selling' : lv.cfg.dailyTarget > 0 ? `target ${usd(lv.cfg.dailyTarget)}` : 'no target'
+              lv.locked
+                ? '🔒 target hit — banked, only selling'
+                : lv.cfg.dailyTarget > 0
+                  ? `target ${usd(lv.cfg.dailyTarget)}${lv.cfg.afterTarget === 'restart' ? ` · take &amp; restart${lv.rounds ? ` · ${lv.rounds} round${lv.rounds === 1 ? '' : 's'} banked ${signed(lv.bankedRounds)}` : ''}` : ''}`
+                  : 'no target'
             }</span>`,
           )}
           ${stat('Wallet', `${usd(lv.wallet)} <span class="dim small">${signed(pnl)} realized</span>`)}
@@ -409,19 +417,28 @@ export class Dashboard {
         this.renderTab(true);
       } else if (act === 'live-recommended') {
         // The repeated real-week Arena winner: plain 3x grid, classic take-profit, green in 6/6 runs; bank $10 a day.
-        Object.assign(s, { maxCapital: 300, leverage: 3, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 10 });
+        Object.assign(s, { maxCapital: 300, leverage: 3, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 10, afterTarget: 'pause' });
         saveLiveSettings(s);
         const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
-        this.engine.updateSettings({ ...PRESETS.live, grid: { ...PRESETS.live.grid!, ...fees, classicTp: true, regime: false } });
+        this.engine.updateSettings({ ...PRESETS.live, grid: { ...PRESETS.live.grid!, ...fees, classicTp: true, regime: false, maxSpacing: undefined } });
+        this.renderTab(true);
+        this.renderLiveStatus(c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start');
+      } else if (act === 'live-boost') {
+        // The race's AGGRESSIVE 5x BOOST on real orders: 8 coins (bigger orders), smart take-profit, regime filter,
+        // steps capped at 0.6%; every +$24 the profit is taken and a new round starts.
+        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 24, afterTarget: 'restart' });
+        saveLiveSettings(s);
+        const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
+        this.engine.updateSettings({ ...PRESETS.live5, grid: { ...PRESETS.live5.grid!, ...fees, classicTp: false, regime: true, maxSpacing: 0.006 } });
         this.renderTab(true);
         this.renderLiveStatus(c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start');
       } else if (act === 'live-aggressive') {
         // Real-week Arena: 5x made +10% to +23% a week on 15 coins, with drops of 14-20% along the way.
         // The setting from the day before yesterday ($300, 5x, 8 coins, classic grid) plus bank the day at $20.
-        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 20 });
+        Object.assign(s, { maxCapital: 300, leverage: 5, maxCoins: 8, dailyLossLimit: 0.2, compound: true, dailyTarget: 20, afterTarget: 'pause' });
         saveLiveSettings(s);
         const fees = { maker: this.engine.settings.grid.maker, taker: this.engine.settings.grid.taker };
-        this.engine.updateSettings({ ...PRESETS.live5, grid: { ...PRESETS.live5.grid!, ...fees, classicTp: true, regime: false } });
+        this.engine.updateSettings({ ...PRESETS.live5, grid: { ...PRESETS.live5.grid!, ...fees, classicTp: true, regime: false, maxSpacing: undefined } });
         this.renderTab(true);
         this.renderLiveStatus(
           c.status === 'running' ? 'saved — refresh the page and press Start to apply (orders are kept)' : 'saved — press Start',
@@ -723,6 +740,7 @@ ${this.liveCardView()}
       else if (lk === 'maxCapital') l.maxCapital = Math.max(10, Number(v) || 100);
       else if (lk === 'compound') l.compound = v === '1';
       else if (lk === 'dailyTarget') l.dailyTarget = Math.max(0, Number(v) || 0);
+      else if (lk === 'afterTarget') l.afterTarget = v === 'restart' ? 'restart' : 'pause';
       else l[lk] = Number(v);
       saveLiveSettings(l);
       return;
@@ -855,6 +873,10 @@ function stat(label: string, value: string): string {
 /** The one-click aggressive profile is active (so its button can show it). */
 function isRecommended(l: LiveSettings): boolean {
   return l.maxCapital === 300 && l.leverage === 3 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound && l.dailyTarget === 10;
+}
+
+function isBoost(l: LiveSettings): boolean {
+  return l.maxCapital === 300 && l.leverage === 5 && l.maxCoins === 8 && Math.abs(l.dailyLossLimit - 0.2) < 1e-9 && l.compound && l.dailyTarget === 24 && l.afterTarget === 'restart';
 }
 
 function isAggressive(l: LiveSettings): boolean {

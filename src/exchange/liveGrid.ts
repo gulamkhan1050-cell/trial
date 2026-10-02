@@ -40,6 +40,8 @@ export interface LiveConfig {
   compound: boolean;
   /** Bank the day: once today's result reaches this many USDT, stop buying until tomorrow (UTC). 0 = off. */
   dailyTarget: number;
+  /** At the target: 'pause' = only sell until tomorrow; 'restart' = sell everything now (take the profit) and start a fresh round. */
+  afterTarget?: 'pause' | 'restart';
 }
 
 // A coin that hit its stop is usually still falling: stay out of it for 4 hours, not 30 minutes.
@@ -90,6 +92,8 @@ export interface LiveSnapshot {
   dayKey?: string;
   dayStart?: number;
   locked?: boolean;
+  rounds?: number;
+  bankedRounds?: number;
   coins: LiveCoin[];
   cooldown: [string, number][];
 }
@@ -117,6 +121,9 @@ export class LiveGrid {
   /** Today's result (UTC day) and whether the daily target has been banked. */
   today = 0;
   locked = false;
+  /** Profit-take-and-restart rounds completed, and what they banked. */
+  rounds = 0;
+  bankedRounds = 0;
   private dayKey = '';
   private dayStart = 0;
   /** How many coins were picked back up from a saved snapshot at start. */
@@ -198,6 +205,8 @@ export class LiveGrid {
       dayKey: this.dayKey,
       dayStart: this.dayStart,
       locked: this.locked,
+      rounds: this.rounds,
+      bankedRounds: this.bankedRounds,
       coins: [...this.coins.values()],
       cooldown: [...this.cooldown],
     };
@@ -212,6 +221,8 @@ export class LiveGrid {
     this.dayKey = s.dayKey ?? '';
     this.dayStart = s.dayStart ?? 0;
     this.locked = s.locked ?? false;
+    this.rounds = s.rounds ?? 0;
+    this.bankedRounds = s.bankedRounds ?? 0;
     this.cooldown = new Map(s.cooldown ?? []);
     for (const c of s.coins ?? []) {
       if (!this.rules[c.symbol] || !c.levels?.length) continue;
@@ -276,6 +287,29 @@ export class LiveGrid {
     }
     this.today = equity - this.dayStart;
     if (this.locked || !(this.cfg.dailyTarget > 0) || this.today < this.cfg.dailyTarget) return;
+    if (this.cfg.afterTarget === 'restart') {
+      // Take the profit: close every coin (resting orders cancelled, holdings sold at market), then count a
+      // fresh round from here. Ladders are re-laid on the next tick at current prices.
+      const banked = this.today;
+      for (const c of [...this.coins.values()]) {
+        try {
+          await this.flatten(c, 'profit taken (flat)');
+        } catch (e) {
+          this.host.log('warn', `LIVE ${c.symbol}: profit-take close failed (${(e as Error).message}) — will retry`);
+          return;
+        }
+      }
+      const b = await this.ex.balance();
+      this.wallet = b.wallet;
+      this.available = b.available;
+      this.unrealized = 0;
+      this.dayStart = this.wallet;
+      this.today = 0;
+      this.rounds++;
+      this.bankedRounds += banked;
+      this.host.log('pass', `💰 LIVE profit taken: +$${banked.toFixed(2)} this round — everything sold, starting round ${this.rounds + 1}`);
+      return;
+    }
     this.locked = true;
     for (const c of this.coins.values())
       for (const l of c.levels)

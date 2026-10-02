@@ -494,3 +494,31 @@ describe('LiveGrid market regime', () => {
     expect(live.coinLimit()).toBe(2);
   });
 });
+
+describe('LiveGrid take profit & restart', () => {
+  it('at the target sells everything, counts a banked round, and lays fresh ladders straight away', async () => {
+    const ex = new MockExchange(RULES, 100);
+    let now = Date.UTC(2026, 9, 2, 8);
+    const logs: string[] = [];
+    const host: LiveHost = { candidates: () => [{ symbol: 'DOGEUSDT', genome: G, score: 0.05 }], stressed: () => false, log: (_k, t) => logs.push(t) };
+    const live = new LiveGrid(ex, host, { ...DEFAULT_LIVE, maxCapital: 100, leverage: 3, maxCoins: 5, dailyTarget: 2, afterTarget: 'restart' }, Object.keys(RULES), () => now);
+    ex.setPrice('DOGEUSDT', 0.1);
+    await live.start();
+    await live.tick();
+    ex.setPrice('DOGEUSDT', 0.0985); // L1 bought
+    now += 31_000;
+    await live.tick();
+    expect(ex.positions.DOGEUSDT.qty).toBeGreaterThan(0);
+    ex.wallet += 3; // round is up $3 (target $2)
+    now += 31_000;
+    await live.tick();
+    expect(live.rounds).toBe(1);
+    expect(live.bankedRounds).toBeGreaterThan(2);
+    expect(live.locked).toBe(false);
+    expect(live.today).toBe(0);
+    expect(ex.positions.DOGEUSDT.qty).toBe(0); // holdings sold = profit taken
+    expect(logs.some((l) => l.includes('profit taken'))).toBe(true);
+    await live.tick();
+    expect((await ex.openOrders()).some((o) => o.side === 'BUY')).toBe(true); // new round already trading
+  });
+});

@@ -20,6 +20,8 @@ export interface LiveSettings {
   compound: boolean;
   /** USDT: once today's result reaches it, stop buying until tomorrow and keep the profit. 0 = off. */
   dailyTarget: number;
+  /** At the daily target: pause until tomorrow, or take the profit and restart at once. */
+  afterTarget: 'pause' | 'restart';
 }
 
 // The aggressive profile: real-week Arena runs at 5x on 15 coins made +10% to +23% a week, with 14-20% drops.
@@ -33,6 +35,7 @@ export const DEFAULT_LIVE_SETTINGS: LiveSettings = {
   dailyLossLimit: 0.2,
   compound: true,
   dailyTarget: 10,
+  afterTarget: 'pause',
 };
 
 /** How often the live grid syncs with the exchange. Per-coin order checks keep this well inside Binance's rate limits. */
@@ -128,7 +131,7 @@ export class LiveController {
       this.live = new LiveGrid(
         this.makeClient(s),
         this.host(),
-        { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, compound: s.compound, dailyTarget: s.dailyTarget, makerFee: this.engine.settings.grid.maker },
+        { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, compound: s.compound, dailyTarget: s.dailyTarget, afterTarget: s.afterTarget, makerFee: this.engine.settings.grid.maker },
         universe,
       );
       await this.live.start(loadSnapshot(s));

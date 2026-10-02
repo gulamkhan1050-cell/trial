@@ -55,6 +55,8 @@ export interface Settings {
     maxSpacing?: number;
     /** Bank the day: once today's paper result reaches this many dollars, lay no new ladders until tomorrow. */
     dailyTarget?: number;
+    /** At the target: 'pause' (default) lays no new ladders until tomorrow; 'restart' sells everything and starts a new round. */
+    afterTarget?: 'pause' | 'restart';
     /** Pin grids to the old one-step take-profit (A/B baseline); off = FORGE may evolve a smart take-profit. */
     classicTp?: boolean;
   };
@@ -732,6 +734,18 @@ export class Engine {
     if (down && bot?.armed && flat) {
       bot.disarm();
       this.say('SENTRY', 'veto', `✕ ${s.symbol} grid stood aside — ${g.regime!.why}`);
+    }
+    // Take-profit-and-restart: sell every grid's holdings at the target and count a fresh round from here.
+    if (this.settings.grid.afterTarget === 'restart' && this.dayBanked()) {
+      const banked = this.totalEquity() - (this.dayStartEquity || this.startBalance);
+      for (const x of this.grids.values()) {
+        if (!x.bot?.armed) continue;
+        if (x.bot.inventory().qty > 0) this.onGridFill(x, x.bot.liquidate(this.price(x.symbol)), 'grid profit taken');
+        x.bot.disarm();
+      }
+      this.dayStartEquity = this.totalEquity();
+      this.say('SENTRY', 'pass', `💰 profit taken: +$${banked.toFixed(2)} this round — all grids sold, new round starts`);
+      return;
     }
     // Daily target reached: let held coins finish, but put no fresh ladders to work today.
     if (bot?.armed && flat && this.dayBanked()) {

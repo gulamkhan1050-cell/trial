@@ -24,7 +24,7 @@ export const RACE_SPECS: RacerSpec[] = [
   // BOOST = bigger orders (bank split 8 ways, not 15), tighter steps (≤ 0.6%) for more fills, and bank the day at +$20.
   { id: 'plain3boost', name: 'PLAIN 3× BOOST', note: 'classic grid · 2× bigger orders · steps ≤0.6% · bank $20/day', grid: { leverage: 3, classicTp: true, regime: false, ...BOOST } },
   { id: 'plain5', name: 'PLAIN 5×', note: 'classic grid, more risk', grid: { leverage: 5, classicTp: true, regime: false } },
-  { id: 'smart5boost', name: 'AGGRESSIVE 5× BOOST', note: 'smart TP + regime · 2× bigger orders · steps ≤0.6% · bank $20/day', grid: { leverage: 5, classicTp: false, regime: true, ...BOOST } },
+  { id: 'smart5boost', name: 'AGGRESSIVE 5× BOOST', note: 'smart TP + regime · 2× bigger orders · steps ≤0.6% · take $24 & restart', grid: { leverage: 5, classicTp: false, regime: true, ...BOOST, dailyTarget: 24, afterTarget: 'restart' } },
   { id: 'smart3', name: 'SMART 3×', note: 'smart take-profit + regime', grid: { leverage: 3, classicTp: false, regime: true } },
 ];
 
