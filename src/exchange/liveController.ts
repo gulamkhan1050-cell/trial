@@ -42,6 +42,25 @@ export const DEFAULT_LIVE_SETTINGS: LiveSettings = {
 export const LIVE_TICK_MS = 1500;
 
 const KEY = 'swarmdesk:binance';
+const AUTO = 'swarmdesk:live:auto';
+
+/** Live trading was started and not killed: the app picks it back up by itself when reopened. */
+export function shouldAutoStart(): boolean {
+  try {
+    return localStorage.getItem(AUTO) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setAutoStart(on: boolean) {
+  try {
+    if (on) localStorage.setItem(AUTO, '1');
+    else localStorage.removeItem(AUTO);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 /** Keys are kept only in this device's browser storage and are sent only to Binance (as a signature). */
 export function loadLiveSettings(): LiveSettings {
@@ -137,6 +156,7 @@ export class LiveController {
       await this.live.start(loadSnapshot(s));
       this.current = s;
       this.status = 'running';
+      setAutoStart(true);
       this.timer = setInterval(async () => {
         if (!this.live) return;
         await this.live.tick();
@@ -144,6 +164,7 @@ export class LiveController {
           this.status = 'killed';
           this.stopTimer();
           saveSnapshot(s, null);
+          setAutoStart(false); // the loss limit fired: don't resume by itself
         } else saveSnapshot(s, this.live.snapshot());
         this.message = this.live.lastError;
         this.engine.notify();
@@ -162,6 +183,7 @@ export class LiveController {
     this.stopTimer();
     if (this.live) await this.live.kill(reason);
     if (this.current) saveSnapshot(this.current, null);
+    setAutoStart(false);
     this.status = 'killed';
     this.engine.notify();
   }

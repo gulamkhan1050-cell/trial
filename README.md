@@ -34,6 +34,21 @@ tunes the spread per coin on the first quarter, tests on the rest, and compares 
 0.01% and your own). A quote fills only when price trades through it, and only with the chosen probability, to stand in
 for queue position.
 
+## The trading profile (fixed)
+
+The app runs one strategy, the one that ran green on Binance Demo day after day — set in
+`src/exchange/profile.ts`, not in the UI:
+
+- classic grid (one-step take-profit, regime filter off) on the 15 liquid coins, **5×**, up to **8 coins** at once
+- crash guard on, reinvest on
+- **take profit & restart**: each time a round makes ~6.7% of capital ($20 per $300) everything is sold and a new round starts
+- **loss limit 20%** of capital → the bot closes everything and stops
+
+Setup only asks for the account (Demo or real money), the API key and secret, and the money to trade. Once
+started, the app resumes trading by itself when reopened, until KILL is pressed or the loss limit fires.
+The Race, Arena and settings switches used to find this profile are gone from the app; their code
+(`src/core/race.ts`, `src/core/arena.ts`) and tests remain.
+
 ## Live trading (Binance USDⓈ-M futures)
 
 **Setup → Binance futures account** runs the grid as real orders:

@@ -1,17 +1,28 @@
 import './styles.css';
 import { Engine, WIDE_MARKETS } from './core/engine';
 import { Dashboard } from './ui/dashboard';
-import { LiveController } from './exchange/liveController';
+import { LiveController, loadLiveSettings, shouldAutoStart } from './exchange/liveController';
+import { profileGrid, withProfile } from './exchange/profile';
 
 const engine = new Engine();
-// The app is the live grid: real-time Binance prices, grid strategy, 15 coins.
-if (engine.settings.feed !== 'binance' || engine.settings.strategy !== 'grid' || engine.settings.symbols.length < WIDE_MARKETS.length)
-  engine.updateSettings({ feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS });
+// The app runs one fixed strategy: the grid on live Binance prices, 15 coins, with the profile's settings.
+const g = profileGrid(engine.settings.grid);
+if (
+  engine.settings.feed !== 'binance' ||
+  engine.settings.strategy !== 'grid' ||
+  engine.settings.symbols.length < WIDE_MARKETS.length ||
+  JSON.stringify(engine.settings.grid) !== JSON.stringify(g)
+)
+  engine.updateSettings({ feed: 'binance', strategy: 'grid', interval: '1m', symbols: WIDE_MARKETS, grid: g });
 // Handy for debugging from the browser console: swarm.log, swarm.grids, …
 (window as unknown as { swarm: Engine }).swarm = engine;
 const live = new LiveController(engine);
 new Dashboard(document.getElementById('app')!, engine, live);
 void engine.start();
+
+// Trading was started and never killed: carry on by itself (orders and coins are picked back up).
+const saved = loadLiveSettings();
+if (shouldAutoStart() && saved.apiKey && saved.apiSecret) void live.start(withProfile(saved));
 
 // Persist the book when the app is backgrounded.
 document.addEventListener('visibilitychange', () => {

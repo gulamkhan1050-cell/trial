@@ -7,6 +7,7 @@ import type { LogEntry } from '../src/core/types';
 import { BinanceFutures, type Network } from '../src/exchange/binance';
 import { DEFAULT_LIVE_SETTINGS, LiveController, type LiveSettings } from '../src/exchange/liveController';
 import { DEFAULT_LIVE, LiveGrid } from '../src/exchange/liveGrid';
+import { PROFILE_LABEL, profileGrid, withProfile } from '../src/exchange/profile';
 
 /**
  * Headless live grid — the same engine and LiveGrid as the app, without a screen, so it can run for
@@ -23,7 +24,8 @@ async function main() {
   if (typeof WebSocket === 'undefined') fail('Node 22 or newer is needed (for WebSocket). In Termux: pkg upgrade nodejs');
   (globalThis as { crypto?: unknown }).crypto ??= webcrypto;
 
-  const s = await config();
+  // The strategy is fixed (see src/exchange/profile.ts); the config only holds the account, keys and money.
+  const s = withProfile(await config());
   const universe = [...new Set([...WIDE_MARKETS, ...MEGA_MARKETS])];
 
   if (args.has('--kill')) return killAll(s, universe);
@@ -34,7 +36,7 @@ async function main() {
     strategy: 'grid',
     interval: '1m',
     symbols: WIDE_MARKETS,
-    grid: { ...DEFAULT_SETTINGS.grid, leverage: s.leverage },
+    grid: profileGrid(DEFAULT_SETTINGS.grid),
   };
   const engine = new Engine(settings);
   const printed = new WeakSet<LogEntry>();
@@ -49,7 +51,8 @@ async function main() {
     }
   });
 
-  say(`starting · ${s.network.toUpperCase()} · $${s.maxCapital} × ${s.leverage} · up to ${s.maxCoins} coins · loss limit ${(s.dailyLossLimit * 100).toFixed(0)}% · reinvest ${s.compound ? 'on' : 'off'}`);
+  say(`starting · ${s.network === 'mainnet' ? 'REAL MONEY' : 'DEMO'} · $${s.maxCapital} · ${PROFILE_LABEL}`);
+  say(`take profit every +$${s.dailyTarget} · stops itself at -$${(s.maxCapital * s.dailyLossLimit).toFixed(0)}`);
   say('downloading 15 coins of 1m history from Binance…');
   await engine.start();
   // Network trouble is worth retrying (run-bot.sh restarts on exit 1); rejected keys are not.
@@ -114,7 +117,7 @@ async function config(): Promise<LiveSettings> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = async (q: string, def: string) => (await rl.question(`${q} [${def}]: `)).trim() || def;
   console.log('\nFirst run — Binance futures API key with ONLY "Enable Futures" (never withdrawals).\n');
-  let network = (await ask('Network — just press Enter for demo, or type mainnet', 'demo')).toLowerCase() as Network;
+  let network = (await ask('Account — press Enter for demo, or type mainnet for REAL money', 'demo')).toLowerCase() as Network;
   let pastedKey = '';
   if (network.length > 20) {
     // The API key pasted one question early: take it as the key, on demo.
@@ -124,15 +127,11 @@ async function config(): Promise<LiveSettings> {
   }
   if (!['demo', 'mainnet', 'testnet'].includes(network)) fail('network must be demo or mainnet');
   const s: LiveSettings = {
+    ...DEFAULT_LIVE_SETTINGS,
     network,
     apiKey: pastedKey || (await ask('Paste the API KEY', '')),
     apiSecret: await ask('Paste the SECRET KEY', ''),
-    maxCapital: +(await ask('Max capital USDT (₹25,000 ≈ 300)', String(DEFAULT_LIVE_SETTINGS.maxCapital))),
-    leverage: +(await ask('Leverage', String(DEFAULT_LIVE_SETTINGS.leverage))),
-    maxCoins: +(await ask('Max coins at once', String(DEFAULT_LIVE_SETTINGS.maxCoins))),
-    dailyLossLimit: +(await ask('Loss limit (fraction of wallet, 0.2 = 20%)', String(DEFAULT_LIVE_SETTINGS.dailyLossLimit))),
-    compound: (await ask('Reinvest profit? y/n', 'y')).toLowerCase().startsWith('y'),
-    dailyTarget: +(await ask('Daily target USDT (stop buying once reached, 0 = off)', String(DEFAULT_LIVE_SETTINGS.dailyTarget))),
+    maxCapital: Math.max(20, +(await ask('Money to trade, USDT in your futures wallet', '150')) || 150),
   };
   if (network === 'mainnet' && (await ask('REAL MONEY. Type YES to confirm', 'no')) !== 'YES') fail('cancelled');
   rl.close();
