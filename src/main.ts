@@ -24,7 +24,22 @@ void engine.start();
 const saved = loadLiveSettings();
 if (shouldAutoStart() && saved.apiKey && saved.apiSecret) void live.start(withProfile(saved));
 
-// Persist the book when the app is backgrounded.
+// On a phone the app only trades while it is on screen (Android/iOS pause hidden apps), so while
+// live trading runs, keep the screen awake. Leave the phone on the charger with the app open.
+let wake: WakeLockSentinel | null = null;
+async function keepAwake() {
+  if (wake || live.status !== 'running' || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) return;
+  try {
+    wake = await navigator.wakeLock.request('screen');
+    wake.addEventListener('release', () => (wake = null));
+  } catch {
+    /* not allowed right now (battery saver) — try again shortly */
+  }
+}
+setInterval(() => void keepAwake(), 10_000);
+
+// Persist the book when the app is backgrounded; re-take the screen lock when it comes back.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') engine.save();
+  else void keepAwake();
 });
