@@ -13,6 +13,7 @@
     "bot": "sh bot/run-bot.sh",
     "bot:win": "vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn && node dist-bot/bot.js",
     "optimize": "vite build --ssr bot/optimize.ts --outDir dist-opt --emptyOutDir --logLevel warn && node dist-opt/optimize.js",
+    "sweep": "vite build --ssr bot/sweep.ts --outDir dist-sweep --emptyOutDir --logLevel warn && node dist-sweep/sweep.js",
     "bot:kill": "vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn && node dist-bot/bot.js --kill",
     "cap:sync": "npm run build && cap sync android",
     "apk": "npm run cap:sync && cd android && ./gradlew assembleDebug"

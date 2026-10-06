@@ -19,3 +19,5 @@ android/capacitor-cordova-android-plugins/
 *.keystore
 dist-opt/
 optimize-report.txt
+dist-sweep/
+sweep-report.txt
