@@ -2,13 +2,15 @@ import type { Settings } from '../core/engine';
 import type { LiveSettings } from './liveController';
 
 /**
- * THE trading profile — fixed. It is the setting that ran green on Binance Demo day after day:
- * classic grid at 5x on up to 8 coins, crash guard on, reinvest on, a 20% loss limit, and the
+ * THE trading profile — fixed. Classic grid at 3x on up to 8 coins (5x ran green on Demo but lost
+ * on the next real week: the optimizer report in reports/ shows why), crash guard on, reinvest on, a 20% loss limit, and the
  * profit taken (everything sold, new round started) each time a round makes ~6.7% of capital
  * ($20 per $300). Only the network, the API keys and the capital are the user's to choose.
  */
 export const PROFILE = {
-  leverage: 5,
+  // 3x: the 9-day real-price optimizer (Sep 27 - Oct 6, $200) — the only setting that made money in both the
+  // tune week and the unseen 2 days, with half the worst drop of 5x (13.4% vs 25.9%). 5x lost $14.60 there.
+  leverage: 3,
   maxCoins: 8,
   dailyLossLimit: 0.2,
   compound: true,
@@ -17,7 +19,7 @@ export const PROFILE = {
   targetShare: 20 / 300,
 };
 
-export const PROFILE_LABEL = '5× classic grid · 8 coins · crash guard · reinvest · take profit & restart at +6.7% · 20% loss limit';
+export const PROFILE_LABEL = '3× classic grid · 8 coins · crash guard · reinvest · take profit & restart at +6.7% · 20% loss limit';
 
 /** Fill the fixed fields into whatever was saved; keeps network, keys and capital. */
 export function withProfile(s: LiveSettings): LiveSettings {
