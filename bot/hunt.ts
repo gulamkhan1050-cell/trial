@@ -429,23 +429,33 @@ async function main() {
     }
   }
   // Refine: mutate the best settings, keep improving the elite.
-  for (let gen = 0; gen < 40; gen++) {
-    const elite = [...seen].sort((a, b) => b.s - a.s).slice(0, 25);
-    for (const e of elite) for (let m = 0; m < 6; m++) evalP(mutate(e.p, r));
-    const best = elite[0];
-    console.log(`  refine ${gen + 1}/40 · ${seen.length} settings · ${Math.round((Date.now() - t0) / 1000)}s · best worst-week $${min(best.pnl).toFixed(0)} avg $${avg(best.pnl).toFixed(0)} (${label(best.p)})`);
+  // The best 10 of EACH family are refined, so one family's local peak can't crowd out the others.
+  const GENS = Number(process.env.HUNT_GENS) || 60;
+  for (let gen = 0; gen < GENS; gen++) {
+    const sorted = [...seen].sort((a, b) => b.s - a.s);
+    const elite = (['grid', 'meanrev', 'breakout', 'trend'] as Family[]).flatMap((f) => sorted.filter((x) => x.p.family === f).slice(0, 10));
+    for (const e of elite) for (let m = 0; m < 4; m++) evalP(mutate(e.p, r));
+    const best = sorted[0];
+    if (gen % 5 === 4)
+      console.log(`  refine ${gen + 1}/${GENS} · ${seen.length} settings · ${Math.round((Date.now() - t0) / 1000)}s · best worst-week $${min(best.pnl).toFixed(0)} avg $${avg(best.pnl).toFixed(0)} (${label(best.p)})`);
   }
 
   // Distinct top settings, then the unseen 8 weeks.
   const top: Row[] = [];
   const names = new Set<string>();
-  for (const row of [...seen].sort((a, b) => b.s - a.s)) {
-    const n = label(row.p);
-    if (names.has(n)) continue;
-    names.add(n);
-    top.push(row);
-    if (top.length >= 30) break;
+  const ranked = [...seen].sort((a, b) => b.s - a.s);
+  for (const f of ['grid', 'meanrev', 'breakout', 'trend'] as Family[]) {
+    let k = 0;
+    for (const row of ranked) {
+      if (row.p.family !== f || k >= 8) continue;
+      const n = label(row.p);
+      if (names.has(n)) continue;
+      names.add(n);
+      top.push(row);
+      k++;
+    }
   }
+  top.sort((a, b) => b.s - a.s);
   const money = (x: number) => `${x >= 0 ? '+' : '-'}$${Math.abs(x).toFixed(0)}`.padStart(6);
   const out = top.map((row) => ({ ...row, un: weekly(row.p, UNSEEN) }));
   const line = (x: (typeof out)[number]) =>
@@ -465,7 +475,7 @@ async function main() {
     ...hit.map(line),
   ].join('\n');
   console.log(`\n${report}`);
-  writeFileSync('hunt-report.txt', report);
+  writeFileSync(process.env.HUNT_OUT || 'hunt-report.txt', report);
 }
 
 main().catch((e) => {
