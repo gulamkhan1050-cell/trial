@@ -51,6 +51,14 @@ function split(r: ArenaResult) {
 }
 
 async function main() {
+  if (!SMOKE) {
+    // Check Binance is reachable before spending half an hour on a replay.
+    const probe = await fetch('https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1m&limit=1').catch(() => null);
+    if (!probe?.ok) {
+      console.error(`✕ Binance prices unreachable from this computer (${probe ? `HTTP ${probe.status}` : 'no connection'}) — run it where the bot runs.`);
+      process.exit(1);
+    }
+  }
   let lastPct = -1;
   console.log(`Optimizer · $${capital} · ${contestants.length} settings · ${TUNE_DAYS} tune days + ${TEST_DAYS} test days of real Binance prices`);
   const out = await runArena({
