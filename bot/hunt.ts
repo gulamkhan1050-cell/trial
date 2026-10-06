@@ -149,7 +149,7 @@ function label(p: P): string {
   if (p.family === 'grid') return `GRID ${p.side} ${p.lev}x · step ${pct(p.step)} · ${p.levels} lv`;
   if (p.family === 'meanrev') return `MEANREV ${p.side} ${p.lev}x · ${p.win}m avg · ${p.k.toFixed(2)}σ · stop ${p.stop ? pct(p.stop) : '-'}`;
   if (p.family === 'breakout') return `BREAKOUT ${p.side} ${p.lev}x · ${p.win}m channel · trail ${pct(p.stop)}`;
-  return `TREND ${p.side} ${p.lev}x · ${p.win}m/${Math.round(p.win * p.k)}m · stop ${p.stop ? pct(p.stop) : '-'}`;
+  return `TREND ${p.side} ${p.lev}x · ${p.win}m/${Math.round(p.win * (Math.round(p.k * 10) / 10))}m · stop ${p.stop ? pct(p.stop) : '-'}`;
 }
 
 // ───────────────────────────── indicators (cached per coin) ─────────────────────────────
@@ -332,7 +332,7 @@ function simPos(p: P, b: Bars, coin: number, from: number, to: number, cash0: nu
   else if (p.family === 'breakout') [hi, lo] = channel(b, coin, p.win);
   else {
     slow = ema(b, coin, p.win);
-    fast = ema(b, coin, Math.max(5, Math.round(p.win * p.k)));
+    fast = ema(b, coin, Math.max(5, Math.round(p.win * (Math.round(p.k * 10) / 10)))); // k rounded: bounded indicator cache
   }
   for (let i = from; i < to; i++) {
     const c = b.c[i];
