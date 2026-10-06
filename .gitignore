@@ -24,3 +24,7 @@ sweep-report.txt
 dist-weeks/
 weeks-report.txt
 weeks-cache.json
+dist-hunt/
+hunt-report.txt
+hunt-cache.bin
+hunt-cache.bin.json
