@@ -1,0 +1,33 @@
+{
+  "name": "swarm-desk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-agent crypto trading desk (SCOUT / SENTRY / HAWK / FORGE) packaged as an Android APK via Capacitor.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "bot": "sh bot/run-bot.sh",
+    "bot:win": "vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn && node dist-bot/bot.js",
+    "optimize": "vite build --ssr bot/optimize.ts --outDir dist-opt --emptyOutDir --logLevel warn && node dist-opt/optimize.js",
+    "sweep": "vite build --ssr bot/sweep.ts --outDir dist-sweep --emptyOutDir --logLevel warn && node dist-sweep/sweep.js",
+    "weeks": "vite build --ssr bot/weeks.ts --outDir dist-weeks --emptyOutDir --logLevel warn && node dist-weeks/weeks.js",
+    "hunt": "vite build --ssr bot/hunt.ts --outDir dist-hunt --emptyOutDir --logLevel warn && node --max-old-space-size=6000 dist-hunt/hunt.js",
+    "bot:kill": "vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn && node dist-bot/bot.js --kill",
+    "cap:sync": "npm run build && cap sync android",
+    "apk": "npm run cap:sync && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  }
+}

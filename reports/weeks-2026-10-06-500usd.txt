@@ -1,0 +1,39 @@
+real Binance 1m prices · 15 coins · $500 · 194 settings · 8 separate weeks
+wk1 = 08-11→08-18  wk2 = 08-18→08-25  wk3 = 08-25→09-01  wk4 = 09-01→09-08  wk5 = 09-08→09-15  wk6 = 09-15→09-22  wk7 = 09-22→09-29  wk8 = 09-29→10-06
+
+ENGINE (what the app trades):
+setting                                                     wk1    wk2    wk3    wk4    wk5    wk6    wk7    wk8 │    avg  worst green  drop
+ENGINE grid 5x · the +23% Arena setting                    -$47   +$23   -$65   +$32  -$104  +$247   -$39   -$40 │    +$1  -$104  3/8   25%
+ENGINE grid 3x · live now (restart at +6.7%)               -$18   +$35   -$42   +$33   -$74  +$133   -$47    +$4 │    +$3   -$74  4/8   16%
+
+TOP 25 by average week:
+setting                                                     wk1    wk2    wk3    wk4    wk5    wk6    wk7    wk8 │    avg  worst green  drop
+GRID long 8x · step 1.20% · 4 levels/side                  -$22   +$55   -$15   +$91   -$93  +$231    -$7   +$51 │   +$36   -$93  4/8   26%
+GRID long 8x · step 1.60% · 8 levels/side                   -$2   +$68   +$26   +$41   -$82   +$89  +$107   +$29 │   +$34   -$82  6/8   21%
+GRID long 8x · step 1.60% · 4 levels/side                  -$14   -$72   +$23   +$93   -$56  +$185  +$116    -$3 │   +$34   -$72  4/8   31%
+GRID long 8x · step 2.50% · 4 levels/side                   -$7   -$13   +$18   +$80   -$90  +$182   +$76   +$21 │   +$33   -$90  5/8   25%
+GRID long 8x · step 2.00% · 8 levels/side                   -$5   +$93   +$21   +$16   -$44   +$64   +$82   +$25 │   +$32   -$44  6/8   15%
+GRID long 8x · step 1.20% · 12 levels/side                  -$5   +$77   +$21   +$24   -$76   +$97   +$88   +$22 │   +$31   -$76  6/8   19%
+GRID long 8x · step 0.80% · 8 levels/side                  -$22   -$56   +$12  +$113   -$70  +$239   +$18    +$2 │   +$30   -$70  5/8   30%
+GRID long 8x · step 2.50% · 8 levels/side                   -$4   +$79   +$15   +$25   -$45   +$62   +$53   +$21 │   +$26   -$45  6/8   13%
+GRID long 8x · step 1.20% · 8 levels/side                   -$6   -$16    +$6   +$69   -$55  +$119   +$73   +$15 │   +$25   -$55  5/8   19%
+GRID long 8x · step 2.00% · 4 levels/side                  -$17   -$22    +$6   +$93   -$85  +$166   +$49   +$13 │   +$25   -$85  5/8   28%
+GRID long 5x · step 1.20% · 4 levels/side                  -$14   +$45    -$9   +$57   -$57  +$135    -$0   +$32 │   +$24   -$57  4/8   16%
+GRID long 8x · step 1.60% · 12 levels/side                  -$2   +$47   +$17   +$18   -$45   +$74   +$48   +$18 │   +$22   -$45  6/8   13%
+GRID long 8x · step 0.80% · 12 levels/side                 -$13   -$38    +$7   +$57   -$58  +$134   +$69   +$17 │   +$22   -$58  5/8   21%
+GRID long 5x · step 2.50% · 4 levels/side                   -$5    +$1   +$11   +$48   -$56  +$103   +$53   +$14 │   +$21   -$56  6/8   15%
+GRID long 5x · step 1.60% · 8 levels/side                   -$2   +$42   +$16   +$26   -$50   +$54   +$65   +$18 │   +$21   -$50  6/8   13%
+GRID long 5x · step 1.60% · 4 levels/side                   -$9   -$36   +$14   +$55   -$33  +$110   +$66    -$1 │   +$21   -$36  4/8   20%
+GRID long 8x · step 0.80% · 16 levels/side                  -$5    -$8   +$28   +$32   -$69   +$88   +$91    +$4 │   +$20   -$69  5/8   18%
+GRID long 5x · step 2.00% · 8 levels/side                   -$3   +$57   +$13   +$10   -$27   +$40   +$50   +$16 │   +$19   -$27  6/8    9%
+GRID long 5x · step 1.20% · 12 levels/side                  -$3   +$47   +$13   +$15   -$47   +$58   +$53   +$14 │   +$19   -$47  6/8   12%
+GRID long 8x · step 1.20% · 16 levels/side                  -$4   +$34   +$16   +$16   -$41   +$63   +$49   +$16 │   +$19   -$41  6/8   13%
+GRID long 8x · step 2.00% · 12 levels/side                  -$3   +$66   +$14   +$20   -$34   +$32   +$33   +$17 │   +$18   -$34  6/8   11%
+GRID long 5x · step 2.00% · 4 levels/side                  -$11    -$3    +$4   +$55   -$52  +$101   +$34    +$8 │   +$17   -$52  5/8   17%
+GRID long 5x · step 0.80% · 8 levels/side                  -$14   -$28    +$7   +$66   -$44  +$131   +$11    +$2 │   +$16   -$44  5/8   19%
+GRID long 5x · step 1.20% · 8 levels/side                   -$4    -$2    +$4   +$41   -$34   +$70   +$47    +$9 │   +$16   -$34  5/8   12%
+GRID long 5x · step 2.50% · 8 levels/side                   -$2   +$50    +$9   +$16   -$28   +$37   +$33   +$13 │   +$16   -$28  6/8    8%
+
+Green EVERY week: 0
+
+Best single week of any setting:  +$247 · settings averaging ≥ 40%/week ($200): 0

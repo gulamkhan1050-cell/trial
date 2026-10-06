@@ -1,0 +1,43 @@
+real Binance 1m prices · 15 coins · $200 · 424 settings
+
+TOP 20 by the 7 tune days (then look at the unseen 2 days):
+setting                                                          tune 7d   TEST 2d      /day     total    drop trades
+GRID NEUTRAL 5x · step 0.80% · 8 levels/side                     +$31.47    +$1.17    +$0.59   +$32.64    5.7%  39033
+GRID NEUTRAL 5x · step 1.20% · 12 levels/side                    +$29.78    +$2.60    +$1.30   +$32.39    5.3%  25726
+GRID long 5x · step 1.20% · 12 levels/side                       +$22.67    +$2.74    +$1.37   +$25.41    5.6%  20732
+GRID NEUTRAL 3x · step 1.20% · 12 levels/side                    +$17.87    +$1.56    +$0.78   +$19.43    3.3%  25726
+GRID NEUTRAL 3x · step 0.80% · 8 levels/side                     +$17.55    +$0.22    +$0.11   +$17.77    3.6%  39033
+HOLD SHORT 5x                                                    +$14.29    -$5.47    -$2.74    +$8.81   22.3%      0
+GRID long 3x · step 1.20% · 12 levels/side                       +$13.60    +$1.65    +$0.82   +$15.25    3.5%  20732
+GRID NEUTRAL 5x · step 0.80% · 12 levels/side                    +$12.87    -$0.01    -$0.01   +$12.85    5.9%  38608
+GRID NEUTRAL 2x · step 1.20% · 12 levels/side                    +$11.91    +$1.04    +$0.52   +$12.96    2.3%  25726
+GRID NEUTRAL 5x · step 1.20% · 8 levels/side                     +$11.85    +$1.74    +$0.87   +$13.59    6.5%  25762
+GRID NEUTRAL 2x · step 0.80% · 8 levels/side                     +$11.29    -$0.00    -$0.00   +$11.29    2.5%  39033
+GRID long 2x · step 1.20% · 12 levels/side                        +$9.07    +$1.10    +$0.55   +$10.16    2.4%  20732
+GRID long 5x · step 0.80% · 8 levels/side                         +$8.84    +$3.81    +$1.90   +$12.65    6.0%  25345
+HOLD SHORT 3x                                                     +$8.58    -$3.29    -$1.64    +$5.29   14.6%      0
+GRID NEUTRAL 3x · step 0.80% · 12 levels/side                     +$7.80    +$0.06    +$0.03    +$7.86    3.6%  38608
+GRID NEUTRAL 3x · step 1.20% · 8 levels/side                      +$7.25    +$1.13    +$0.56    +$8.37    3.9%  25762
+GRID long 5x · step 1.20% · 8 levels/side                         +$6.99    +$2.56    +$1.28    +$9.55    7.4%  17654
+GRID long 5x · step 0.80% · 12 levels/side                        +$6.88    +$2.22    +$1.11    +$9.10    6.9%  26295
+GRID long 5x · step 0.80% · 4 levels/side                         +$6.51    +$0.72    +$0.36    +$7.23    8.1%  24653
+GRID NEUTRAL 1x · step 1.20% · 12 levels/side                     +$5.96    +$0.52    +$0.26    +$6.48    1.2%  25726
+
+Positive in BOTH the tune week and the unseen days: 48
+GRID NEUTRAL 5x · step 0.80% · 8 levels/side                     +$31.47    +$1.17    +$0.59   +$32.64    5.7%  39033
+GRID NEUTRAL 5x · step 1.20% · 12 levels/side                    +$29.78    +$2.60    +$1.30   +$32.39    5.3%  25726
+GRID long 5x · step 1.20% · 12 levels/side                       +$22.67    +$2.74    +$1.37   +$25.41    5.6%  20732
+GRID NEUTRAL 3x · step 1.20% · 12 levels/side                    +$17.87    +$1.56    +$0.78   +$19.43    3.3%  25726
+GRID NEUTRAL 3x · step 0.80% · 8 levels/side                     +$17.55    +$0.22    +$0.11   +$17.77    3.6%  39033
+GRID long 3x · step 1.20% · 12 levels/side                       +$13.60    +$1.65    +$0.82   +$15.25    3.5%  20732
+GRID NEUTRAL 5x · step 1.20% · 8 levels/side                     +$11.85    +$1.74    +$0.87   +$13.59    6.5%  25762
+GRID NEUTRAL 2x · step 1.20% · 12 levels/side                    +$11.91    +$1.04    +$0.52   +$12.96    2.3%  25726
+GRID long 5x · step 0.80% · 8 levels/side                         +$8.84    +$3.81    +$1.90   +$12.65    6.0%  25345
+GRID long 2x · step 1.20% · 12 levels/side                        +$9.07    +$1.10    +$0.55   +$10.16    2.4%  20732
+GRID long 5x · step 1.20% · 8 levels/side                         +$6.99    +$2.56    +$1.28    +$9.55    7.4%  17654
+GRID long 5x · step 0.80% · 12 levels/side                        +$6.88    +$2.22    +$1.11    +$9.10    6.9%  26295
+GRID NEUTRAL 3x · step 1.20% · 8 levels/side                      +$7.25    +$1.13    +$0.56    +$8.37    3.9%  25762
+GRID long 5x · step 1.20% · 4 levels/side                         +$3.34    +$4.70    +$2.35    +$8.03    8.7%  17428
+GRID long 3x · step 0.80% · 8 levels/side                         +$5.74    +$2.25    +$1.12    +$7.99    3.8%  25345
+
+Made ≥ $10/day on the unseen days AND was positive in the tune week: 0
