@@ -194,7 +194,10 @@ async function simulate(loaded: Loaded, opt: ArenaOptions, run: number): Promise
   // they then trade identical ladders, so the comparison isolates what actually differs — and
   // the search (most of the Arena's CPU) runs once instead of once per contestant.
   // Grids that share fees and take-profit rules can share one FORGE (fast mode); old-vs-new must not.
-  const feeKey = (e: Engine) => `${e.settings.grid.maker}/${e.settings.grid.taker}/${e.settings.grid.classicTp ? 'classic' : 'smart'}`; // FORGE ignores regime, so OLD and REGIME may share it
+  // Contestants whose FORGE searches the same space share it (fast mode). FORGE ignores regime, leverage and
+  // slices, but take-profit style and the step cap change what it breeds.
+  const feeKey = (e: Engine) =>
+    `${e.settings.grid.maker}/${e.settings.grid.taker}/${e.settings.grid.classicTp ? 'classic' : 'smart'}/${e.settings.grid.maxSpacing ?? '-'}`;
   const leaders = new Map<string, Engine>();
   const followerOf = new Map<Engine, Engine>();
   for (const e of engines) {
