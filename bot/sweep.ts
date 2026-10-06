@@ -19,7 +19,7 @@ const TEST_DAYS = 2;
 const FEE = 0.0005;
 const EVAL = 15; // decide every 15 minutes
 
-interface Params {
+export interface Params {
   family: 'trend' | 'hold' | 'grid';
   /** grid: step between levels, levels per side, and whether it also sells above the centre (neutral). */
   step?: number;
@@ -147,7 +147,7 @@ function summarize(equity: { t: number; v: number }[], trades: number) {
  * each bought back one step down. Position target = -(levels crossed from the centre), clamped to the ladder;
  * leaving the ladder by one more step closes everything at market (taker) and re-centres.
  */
-function runGrid(p: Params, c: Candle[], slice: number, from: number, len: number, onBar: (i: number, v: number) => void) {
+export function runGrid(p: Params, c: Candle[], slice: number, from: number, len: number, onBar: (i: number, v: number) => void) {
   const step = p.step!;
   const N = p.levels!;
   let cash = slice;
@@ -219,7 +219,7 @@ function runGrid(p: Params, c: Candle[], slice: number, from: number, len: numbe
   return trades;
 }
 
-function name(p: Params) {
+export function name(p: Params) {
   if (p.family === 'grid') return `GRID ${p.shorts ? 'NEUTRAL' : 'long'} ${p.lev}x · step ${(p.step! * 100).toFixed(2)}% · ${p.levels} levels/side`;
   if (p.family === 'hold') return `HOLD ${p.shorts ? 'SHORT' : 'LONG'} ${p.lev}x${p.stop ? ` stop ${p.stop * 100}%` : ''}`;
   return `TREND ${p.shorts ? 'long+short' : 'long'} ${p.lev}x · ${p.slow / 60}h · band ${(p.band * 100).toFixed(1)}% · exit ${p.exit}${p.stop ? ` · stop ${p.stop * 100}%` : ''}`;
@@ -278,7 +278,9 @@ async function main() {
   writeFileSync('sweep-report.txt', report);
 }
 
-main().catch((e) => {
-  console.error('✕', (e as Error).message);
-  process.exit(1);
-});
+// Only when run as the sweep itself (weeks.ts imports runGrid from here).
+if (process.argv[1]?.includes('sweep'))
+  main().catch((e) => {
+    console.error('✕', (e as Error).message);
+    process.exit(1);
+  });

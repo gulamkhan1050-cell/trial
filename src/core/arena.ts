@@ -125,7 +125,7 @@ export async function loadData(
   return { data, source: 'sim', note: 'offline simulated prices', symbols };
 }
 
-type Loaded = Awaited<ReturnType<typeof loadData>>;
+export type Loaded = Awaited<ReturnType<typeof loadData>>;
 
 export async function runArena(opt: ArenaOptions): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
   const loaded = await loadData(opt.symbols, WARMUP_BARS + opt.days * 1440, opt.source, opt.onProgress);
@@ -171,7 +171,7 @@ export function averageRuns(all: ArenaResult[][]): ArenaResult[] {
   });
 }
 
-async function simulate(loaded: Loaded, opt: ArenaOptions, run: number): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
+export async function simulate(loaded: Loaded, opt: ArenaOptions, run: number): Promise<{ results: ArenaResult[]; note: string; source: 'real' | 'sim' }> {
   const { data, source, note } = loaded;
   const symbols = loaded.symbols;
   const len = Math.min(...symbols.map((s) => data[s].length));

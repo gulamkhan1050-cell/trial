@@ -21,3 +21,6 @@ dist-opt/
 optimize-report.txt
 dist-sweep/
 sweep-report.txt
+dist-weeks/
+weeks-report.txt
+weeks-cache.json
