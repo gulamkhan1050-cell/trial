@@ -93,6 +93,26 @@ describe('Engine in GRID mode', () => {
   }, 60_000);
 });
 
+describe('fixed grid (no FORGE search)', () => {
+  it('runs the pinned ladder on every market and never breeds another', async () => {
+    const { vi } = await import('vitest');
+    const { Engine, DEFAULT_SETTINGS } = await import('../src/core/engine');
+    const { PROFILE, profileGrid } = await import('../src/exchange/profile');
+    vi.useFakeTimers();
+    const engine = new Engine({ ...DEFAULT_SETTINGS, feed: 'sim', strategy: 'grid', simBarMs: 400, symbols: ['BTCUSDT', 'ETHUSDT'], grid: profileGrid(DEFAULT_SETTINGS.grid) });
+    await engine.start();
+    await vi.advanceTimersByTimeAsync(400 * 900);
+    engine.stop();
+    vi.useRealTimers();
+    for (const g of engine.grids.values()) {
+      expect(g.forge.generation).toBeGreaterThan(0);
+      expect(g.forge.champion?.genome).toMatchObject({ ...PROFILE.grid, tp: 1, deep: 0 });
+      if (g.bot) expect(g.bot.genome).toMatchObject(PROFILE.grid);
+    }
+    expect(engine.grids.size).toBe(2);
+  }, 60_000);
+});
+
 describe('GRID stability on calm, BTC-like replay', () => {
   it('arms once and keeps trading instead of flip-flopping on marginal re-validations', async () => {
     const { vi } = await import('vitest');

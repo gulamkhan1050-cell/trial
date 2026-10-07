@@ -2,24 +2,26 @@ import type { Settings } from '../core/engine';
 import type { LiveSettings } from './liveController';
 
 /**
- * THE trading profile — fixed. Classic grid at 3x on up to 8 coins (5x ran green on Demo but lost
- * on the next real week: the optimizer report in reports/ shows why), crash guard on, reinvest on, a 20% loss limit, and the
- * profit taken (everything sold, new round started) each time a round makes ~6.7% of capital
- * ($20 per $300). Only the network, the API keys and the capital are the user's to choose.
+ * THE trading profile — fixed. One long grid on all 15 coins at 5x: 8 buys 2% apart under the price, each sold
+ * one step up, a stop one step under the lowest buy. No FORGE search (its tuned grids lost on real weeks).
+ * Crash guard on, reinvest on, a 10% loss limit, and the profit taken (everything sold, new round started)
+ * each time a round makes 8% of capital ($40 per $500). Only the network, the API keys and the capital are the user's to choose.
  */
 export const PROFILE = {
-  // 3x: the 9-day real-price optimizer (Sep 27 - Oct 6, $200) — the only setting that made money in both the
-  // tune week and the unseen 2 days, with half the worst drop of 5x (13.4% vs 25.9%). 5x lost $14.60 there.
-  leverage: 3,
-  maxCoins: 8,
-  dailyLossLimit: 0.2,
+  // Engine replay of 16 real weeks Jun 16 - Oct 6 ($500 a week, reports/): +$17 a week, worst week -$16,
+  // 12 of 16 green, 14% worst drop. The FORGE grid at 3x it replaces: -$11 a week, worst -$93, 6 of 16 green, 21% drop.
+  // Both-direction (long + short) grids lost on average over 16 weeks at every leverage, so this stays long-only.
+  leverage: 5,
+  maxCoins: 15,
+  grid: { spacing: 0.02, levels: 8, stop: 0.02 },
+  dailyLossLimit: 0.1,
   compound: true,
   afterTarget: 'restart' as const,
-  /** Round target as a share of capital: $20 on $300. */
-  targetShare: 20 / 300,
+  /** Round target as a share of capital: $40 on $500 (the 16-week replay: 12 of 16 weeks green vs 11 at +6.7%). */
+  targetShare: 40 / 500,
 };
 
-export const PROFILE_LABEL = '3× classic grid · 8 coins · crash guard · reinvest · take profit & restart at +6.7% · 20% loss limit';
+export const PROFILE_LABEL = '5× fixed grid (8 buys 2% apart) · 15 coins · crash guard · reinvest · take profit & restart at +8% · 10% loss limit';
 
 /** Fill the fixed fields into whatever was saved; keeps network, keys and capital. */
 export function withProfile(s: LiveSettings): LiveSettings {
@@ -45,6 +47,7 @@ export function profileGrid(g: Settings['grid']): Settings['grid'] {
     crashShare: 0.67,
     classicTp: true,
     regime: false,
+    fixed: PROFILE.grid,
     slices: undefined,
     maxSpacing: undefined,
     dailyTarget: undefined,
