@@ -38,7 +38,7 @@ for queue position.
 
 The app runs one strategy, set in `src/exchange/profile.ts`, not in the UI:
 
-- **fixed long grid** on all 15 liquid coins at **5×**: 8 buys 2% apart under the price, each sold one step (2%) up,
+- **fixed long grid** on all 15 liquid coins at **5×**: 8 buys 1.2% apart under the price, each sold one step (1.2%) up,
   a stop one step under the lowest buy. FORGE no longer searches for grids; it only rates the coins.
 - crash guard on, reinvest on
 - **take profit & restart**: each time a round makes 8% of capital ($40 per $500) everything is sold and a new round starts
@@ -48,6 +48,9 @@ Replayed through the engine on 16 real weeks Jun 16 – Oct 6 ($500 each week, `
 **+$17 a week**, worst week −$16, 12 of 16 weeks green, 14% worst drop. The FORGE-tuned 3× grid it replaces made
 −$11 a week (worst −$93, 6 of 16 green, 21% drop). Grids that buy and short (both directions) lost money on average
 over the same 16 weeks at every leverage tried.
+
+The step was then cut from 2% to 1.2% so it trades more (`reports/steps-16wk-2026-10-07-300usd.txt`, $300 a week):
+about 45 trades a day instead of 15 at the same average (+$11 vs +$10 a week), with a worse worst week (−$34 vs −$10).
 
 Setup only asks for the account (Demo or real money), the API key and secret, and the money to trade. Once
 started, the app resumes trading by itself when reopened, until KILL is pressed or the loss limit fires.
