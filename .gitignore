@@ -28,3 +28,4 @@ dist-hunt/
 hunt-report.txt
 hunt-cache.bin
 hunt-cache.bin.json
+hunt-run/
