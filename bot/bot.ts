@@ -1,5 +1,5 @@
 import { flushStorage, STATE_FILE } from './nodeStorage'; // must come first: gives src/ a localStorage
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { webcrypto } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { DEFAULT_SETTINGS, Engine, MEGA_MARKETS, WIDE_MARKETS, type Settings } from '../src/core/engine';
@@ -14,7 +14,8 @@ import { PROFILE_LABEL, profileGrid, withProfile } from '../src/exchange/profile
  * days in Termux on a phone (or any small server). Ctrl+C stops the bot but leaves its orders and
  * positions on Binance; the next start picks them back up. `--kill` closes everything.
  *
- * Exit codes (run-bot.sh restarts on anything else): 0 = stopped by you, 3 = kill switch / loss limit.
+ * Exit codes (run-bot.sh restarts on anything else): 0 = stopped by you, 3 = kill switch / loss limit,
+ * 4 = scheduled restart for updates (BOT_RESTART_HOURS, used by bot-auto.bat), 5 = another bot is already running.
  */
 
 const CONFIG_FILE = process.env.BOT_CONFIG ?? 'bot.config.json';
@@ -26,6 +27,7 @@ async function main() {
 
   // The strategy is fixed (see src/exchange/profile.ts); the config only holds the account, keys and money.
   const s = withProfile(await config());
+  if (!args.has('--kill')) singleInstance();
   const universe = [...new Set([...WIDE_MARKETS, ...MEGA_MARKETS])];
 
   if (args.has('--kill')) return killAll(s, universe);
@@ -70,6 +72,15 @@ async function main() {
     process.exit(code);
   };
   process.on('SIGINT', () => stop(0, 'stopped — orders and positions stay on Binance; run again to resume, or with --kill to close all'));
+  // bot-auto.bat: exit every BOT_RESTART_HOURS so the launcher can pull updates and start the new version.
+  // Orders and positions stay on Binance and are resumed; waits for a sync round in flight to finish first.
+  const restartHours = Number(process.env.BOT_RESTART_HOURS) || 0;
+  if (restartHours > 0)
+    setTimeout(async () => {
+      ctl.pause(); // no new sync rounds from here
+      for (let i = 0; i < 40 && ctl.live?.syncing; i++) await new Promise((r) => setTimeout(r, 250));
+      stop(4, `restarting to check for updates (every ${restartHours} h) — orders and positions stay on Binance`);
+    }, restartHours * 3_600_000);
   process.on('SIGTERM', () => stop(1, 'terminated by the system — will resume on restart'));
 
   setInterval(async () => {
@@ -152,6 +163,32 @@ function say(text: string) {
 
 function money(x: number) {
   return `${x >= 0 ? '+' : '−'}$${Math.abs(x).toFixed(2)}`;
+}
+
+/**
+ * Two bots on one account would cancel each other's orders: refuse to start while another one (same state file)
+ * is running, e.g. the Startup copy of bot-auto.bat plus a double-click. Exit 5 = "already running", not retried.
+ */
+function singleInstance() {
+  const lock = `${STATE_FILE}.lock`;
+  if (existsSync(lock)) {
+    const pid = Number(readFileSync(lock, 'utf8'));
+    let alive = false;
+    try {
+      alive = pid > 0 && pid !== process.pid && process.kill(pid, 0);
+    } catch {
+      alive = false; // no such process: a stale lock from a crash
+    }
+    if (alive) fail(`the bot is already running (process ${pid}) — only one may trade this account`, 5);
+  }
+  writeFileSync(lock, String(process.pid));
+  process.on('exit', () => {
+    try {
+      if (readFileSync(lock, 'utf8') === String(process.pid)) unlinkSync(lock);
+    } catch {
+      /* already gone */
+    }
+  });
 }
 
 function fail(msg: string, code = 2): never {

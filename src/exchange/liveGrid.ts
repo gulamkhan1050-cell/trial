@@ -135,6 +135,10 @@ export class LiveGrid {
   private startedAt = 0;
   private reconcilePending = false;
   private busy = false;
+  /** True while a sync round is talking to the exchange (wait for it before saving and exiting). */
+  get syncing(): boolean {
+    return this.busy;
+  }
   private cooldown = new Map<string, number>();
   private lastBalance = 0;
   private rules: Record<string, SymbolRules> = {};

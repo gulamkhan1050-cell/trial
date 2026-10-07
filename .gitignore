@@ -35,3 +35,5 @@ combo-report.txt
 bot.*.json
 bot-*-state.json
 bot-*-state.json.tmp
+bot-state.json.lock
+bot-*-state.json.lock

@@ -7,7 +7,7 @@ npx vite build --ssr bot/bot.ts --outDir dist-bot --emptyOutDir --logLevel warn 
 while true; do
   node dist-bot/bot.js "$@"
   code=$?
-  case $code in 0|2|3) break ;; esac
+  case $code in 0|2|3|5) break ;; esac
   echo "bot exited ($code) — restarting in 15 s (Ctrl+C to stop)"
   sleep 15
 done
