@@ -1,0 +1,21 @@
+ENSEMBLE test · real Binance 1m · 15 coins · $300 each week · 16 weeks Jun 16 - Oct 6 (oldest→newest)
+
+each voter ALONE (full 5x on its coin):
+  meanrev 480m 3.6σ stop 8%                            -$2  +$9 +$35  +$2 +$16 -$24 +$11 +$10  +$4 +$32 +$17 +$19 +$18  +$6 +$31  +$2 │ avg  +$12 worst  -$24 green 14/16 drop 25% trades/day 8.2
+  meanrev 240m 3σ stop 4%                             -$50 -$24 +$27  +$2 +$23 -$49  +$5  -$4 -$12 +$56  +$2 +$32 -$26 +$33  +$1  +$2 │ avg   +$1 worst  -$50 green 10/16 drop 32% trades/day 24.8
+  meanrev 1440m 3σ stop 8%                            -$23 +$51 +$30  -$8 +$11 -$37 +$28  +$8 +$26 +$23 +$17 +$52 -$31 +$24  +$2 +$38 │ avg  +$13 worst  -$37 green 12/16 drop 25% trades/day 5.5
+  meanrev 120m 3.5σ stop 4%                            +$7 -$33  +$9 -$26 +$17 -$22  -$6 -$12 -$13 +$65 +$13 +$23 -$29 +$18 -$11 -$16 │ avg   -$1 worst  -$33 green 7/16 drop 26% trades/day 23.8
+  breakout 1440m trail 2%                             -$30 -$55  +$7  +$4  -$9  -$5 -$21  -$3 -$23+$205 -$26 +$62  +$4+$103 -$63 -$25 │ avg   +$8 worst  -$63 green 6/16 drop 28% trades/day 9.3
+  trend 1440m stop 2%                                 -$47 -$72 +$45  -$9  -$2 -$27 -$13 -$28 -$44+$182 -$51 +$96 -$88+$340 -$19 -$49 │ avg  +$13 worst  -$88 green 4/16 drop 31% trades/day 11.8
+
+ENSEMBLES (each voter in = 1/K of 5x; all agree = 5x):
+  all 6 · any fires · 5x max                          -$24 -$23 +$27  -$6  +$9 -$27  +$0  -$5 -$11+$107  -$6 +$50 -$28 +$85 -$11 -$10 │ avg   +$8 worst  -$28 green 6/16 drop 17% trades/day 83.3
+  all 6 · need 2+ agree · 5x max                      -$23 -$23 +$26  -$5  +$9 -$23  -$0  -$4  -$7+$108  -$8 +$47 -$23 +$79 -$16 -$10 │ avg   +$8 worst  -$23 green 5/16 drop 17% trades/day 75.7
+  4 meanrev · any fires · 5x max                      -$16  -$1 +$25  -$8 +$17 -$33  +$9  +$1  +$1 +$46 +$12 +$31 -$17 +$20  +$6  +$6 │ avg   +$6 worst  -$33 green 11/16 drop 22% trades/day 62.2
+  4 meanrev · need 2+ agree · 5x max                  -$17  +$3 +$26  -$6 +$18 -$30  +$8  +$0  +$3 +$38 +$15 +$25 -$18 +$17 +$12  +$9 │ avg   +$6 worst  -$30 green 12/16 drop 21% trades/day 47.6
+  4 meanrev · need 3+ agree · 5x max                   -$8  +$6 +$28  -$7 +$15 -$25 +$10  +$6  +$3 +$24 +$11 +$13  -$3 +$10  +$7 +$16 │ avg   +$7 worst  -$25 green 12/16 drop 20% trades/day 26.6
+  all 6 · any fires · 10x max                         -$48 -$48 +$54 -$12 +$18 -$52  +$0 -$10 -$22+$226 -$14+$105 -$55+$179 -$24 -$21 │ avg  +$17 worst  -$55 green 6/16 drop 33% trades/day 83.3
+  all 6 · need 2+ agree · 10x max                     -$46 -$47 +$54 -$10 +$18 -$45  -$1  -$8 -$15+$228 -$18 +$96 -$46+$164 -$33 -$21 │ avg  +$17 worst  -$47 green 5/16 drop 32% trades/day 75.7
+  4 meanrev · any fires · 10x max                     -$36  -$9 +$50 -$15 +$33 -$64 +$17  +$1  +$1 +$92 +$24 +$65 -$34 +$42  +$9 +$10 │ avg  +$12 worst  -$64 green 11/16 drop 41% trades/day 62.2
+  4 meanrev · need 2+ agree · 10x max                 -$39  +$1 +$53 -$12 +$36 -$59 +$16  -$1  +$6 +$75 +$30 +$51 -$36 +$35 +$22 +$16 │ avg  +$12 worst  -$59 green 11/16 drop 41% trades/day 47.6
+  4 meanrev · need 3+ agree · 10x max                 -$20  +$9 +$57 -$13 +$30 -$51 +$20 +$11  +$5 +$48 +$21 +$27  -$8 +$19 +$13 +$32 │ avg  +$12 worst  -$51 green 12/16 drop 38% trades/day 26.6
