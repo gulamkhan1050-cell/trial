@@ -2,7 +2,7 @@ import { type Engine, fmtPrice, tpLabel } from '../core/engine';
 import type { AgentId } from '../core/types';
 import { barsChart, candleChart, lineChart } from './charts';
 import { type LiveController, type LiveSettings, loadLiveSettings, saveLiveSettings } from '../exchange/liveController';
-import { PROFILE_LABEL, withProfile } from '../exchange/profile';
+import { PROFILE, PROFILE_LABEL, withProfile } from '../exchange/profile';
 
 type Tab = 'grid' | 'log' | 'setup';
 
@@ -241,7 +241,7 @@ export class Dashboard {
         <label>Money to trade (USDT in your futures wallet)
           <input type="number" min="20" step="10" data-live="maxCapital" value="${l.maxCapital}"></label>
         <div class="stats">
-          ${stat('Strategy (fixed)', 'classic grid · 3× · 8 coins')}
+          ${stat('Strategy (fixed)', `fixed grid · ${PROFILE.leverage}× · ${PROFILE.maxCoins} coins`)}
           ${stat('Take profit', `every +${usd(l.dailyTarget)} → sell all, new round`)}
           ${stat('Loss limit', `stops itself at −${usd(l.maxCapital * l.dailyLossLimit)}`)}
           ${stat('Reinvest', 'on — profits grow the budget')}

@@ -4,7 +4,7 @@ import { DEFAULT_HAWK, type HawkConfig, manage, plan, unrealized } from '../agen
 import { PaperBroker } from './broker';
 import { DEFAULT_EVOLVER, type EvolverState, newEvolver, type Scored, step } from './evolver';
 import { BINANCE_PUBLIC, BinanceFeed, type FeedStatus, type Interval, INTERVALS, type MarketFeed, ReplayFeed, SimFeed } from './market';
-import { DEFAULT_GRID_FEES, type GridFill, type GridForge, type GridForgeOptions, GridBot, type GridGenome, type GridState, gridSafe, newGridForge, stepGridForge } from './grid';
+import { DEFAULT_GRID_FEES, type GridFill, type GridForge, type GridForgeOptions, GridBot, type GridGenome, type GridState, gridSafe, newGridForge, scoreGrid, stepGridForge } from './grid';
 
 export interface GridSlot {
   symbol: string;
@@ -59,6 +59,8 @@ export interface Settings {
     afterTarget?: 'pause' | 'restart';
     /** Pin grids to the old one-step take-profit (A/B baseline); off = FORGE may evolve a smart take-profit. */
     classicTp?: boolean;
+    /** Skip FORGE: every market runs this one ladder (step, buy levels, stop below the lowest level). */
+    fixed?: { spacing: number; levels: number; stop: number };
   };
   sentry: SentryConfig;
   hawk: HawkConfig;
@@ -870,7 +872,11 @@ export class Engine {
     const before = g.forge.champion?.genome.id;
     const t0 = performance.now();
     this.agents.FORGE = { busy: true, text: `grid gen ${g.forge.generation + 1} · ${short(g.symbol)}`, at: Date.now() };
-    g.forge = stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand, this.forgeOptions());
+    const fx = this.settings.grid.fixed;
+    // Fixed grid: no search — the one ladder is re-scored only to rank coins (the live pick takes the best).
+    g.forge = fx
+      ? { ...g.forge, generation: g.forge.generation + 1, champion: scoreGrid({ id: `FIX-${fx.spacing}-${fx.levels}-${fx.stop}`, ...fx, tp: 1, deep: 0 }, candles.slice(-GRID_WINDOW), this.gridFees()) }
+      : stepGridForge(g.forge, candles.slice(-GRID_WINDOW), this.gridFees(), this.rand, this.forgeOptions());
     const f = g.forge;
     const c = f.champion;
     if (c && c.genome.id !== before) {
