@@ -49,6 +49,10 @@ export interface ExchangeClient {
   cancelStop(symbol: string, stop: { id: number; algo: boolean }): Promise<void>;
   /** Close the whole position at market (reduce-only). */
   marketClose(symbol: string): Promise<void>;
+  /** Open (or add to) a position at market (taker fee); returns what filled and at what average price. */
+  marketOpen(symbol: string, side: 'BUY' | 'SELL', qty: number): Promise<{ qty: number; avgPrice: number }>;
+  /** Closing prices of the last `limit` FINISHED candles (oldest first); the candle still forming is left out. */
+  closes(symbol: string, interval: '1m' | '1h', limit: number): Promise<number[]>;
   cancel(symbol: string, orderId: number): Promise<void>;
   cancelAll(symbol: string): Promise<void>;
   /** All open orders, or just one symbol's (much cheaper on Binance's rate limit). */

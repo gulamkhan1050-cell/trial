@@ -241,7 +241,7 @@ export class Dashboard {
         <label>Money to trade (USDT in your futures wallet)
           <input type="number" min="20" step="10" data-live="maxCapital" value="${l.maxCapital}"></label>
         <div class="stats">
-          ${stat('Strategy (fixed)', `fixed grid · ${PROFILE.leverage}× · ${PROFILE.maxCoins} coins`)}
+          ${stat('Strategy (fixed)', `${PROFILE.leverage}× · ½ grid on ${PROFILE.maxCoins} coins + ½ panic buy on ${PROFILE.panic.coins}`)}
           ${stat('Take profit', `every +${usd(l.dailyTarget)} → sell all, new round`)}
           ${stat('Loss limit', `stops itself at −${usd(l.maxCapital * l.dailyLossLimit)}`)}
           ${stat('Reinvest', 'on — profits grow the budget')}
@@ -302,7 +302,15 @@ export class Dashboard {
           ${stat('Wallet', `${usd(lv.wallet)} <span class="dim small">${signed(pnl)} realized</span>`)}
           ${stat('Held coins now', `<span class="${cls(lv.unrealized)}">${signed(lv.unrealized)}</span>`)}
           ${stat('Round trips', `${lv.roundTrips} <span class="dim small">booked ${signed(lv.realized)}</span>`)}
-          ${stat('Budget · coins', `${usd(lv.budget)} × ${lv.cfg.leverage} · ${lv.coins.size}/${lv.cfg.maxCoins}${lv.cfg.compound && Math.abs(lv.budget - lv.baseBudget) >= 0.01 ? ` <span class="dim small">reinvesting (started ${usd(lv.baseBudget)})</span>` : ''}`)}
+          ${
+            lv.panic && lv.cfg.panic
+              ? stat(
+                  'Panic buy',
+                  `${lv.panic.pos.size} held · ${lv.panic.trades} done <span class="dim small">${lv.panic.set.map((x) => `${esc(x.replace('USDT', ''))}${lv.panic!.pos.has(x) ? '●' : ''}`).join(' ') || 'picking coins…'}</span>`,
+                )
+              : ''
+          }
+          ${stat('Budget · grid coins', `${usd(lv.budget)} × ${lv.cfg.leverage} · ${lv.coins.size}/${lv.cfg.maxCoins}${lv.cfg.compound && Math.abs(lv.budget - lv.baseBudget) >= 0.01 ? ` <span class="dim small">reinvesting (started ${usd(lv.baseBudget)})</span>` : ''}`)}
         </div>
         <p class="dim small">This box is your Binance account. Everything below it is the paper simulation ($1,000 of play money on all 15 coins) that FORGE uses to pick coins — not your money.</p>
         <div class="stages">${coins || '<span class="dim small">waiting for FORGE to approve coins…</span>'}</div>

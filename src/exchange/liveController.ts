@@ -1,6 +1,7 @@
 import { type Engine, WIDE_MARKETS, MEGA_MARKETS } from '../core/engine';
 import { BinanceFutures, type Network } from './binance';
 import { DEFAULT_LIVE, type LiveCandidate, LiveGrid, type LiveHost, type LiveSnapshot } from './liveGrid';
+import type { PanicConfig } from './panic';
 import type { ExchangeClient } from './types';
 
 /**
@@ -22,6 +23,8 @@ export interface LiveSettings {
   dailyTarget: number;
   /** At the daily target: pause until tomorrow, or take the profit and restart at once. */
   afterTarget: 'pause' | 'restart';
+  /** Panic-buy strategy next to the grid (its own coins and budget share); absent = grid only. */
+  panic?: PanicConfig;
 }
 
 // The aggressive profile: real-week Arena runs at 5x on 15 coins made +10% to +23% a week, with 14-20% drops.
@@ -150,7 +153,7 @@ export class LiveController {
       this.live = new LiveGrid(
         this.makeClient(s),
         this.host(),
-        { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, compound: s.compound, dailyTarget: s.dailyTarget, afterTarget: s.afterTarget, makerFee: this.engine.settings.grid.maker },
+        { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, dailyLossLimit: s.dailyLossLimit, compound: s.compound, dailyTarget: s.dailyTarget, afterTarget: s.afterTarget, panic: s.panic, makerFee: this.engine.settings.grid.maker },
         universe,
       );
       await this.live.start(loadSnapshot(s));

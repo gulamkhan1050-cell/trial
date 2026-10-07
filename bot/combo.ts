@@ -36,7 +36,7 @@ interface Mix {
   mr?: P;
   /** Share of the money in the grid (rest in mean reversion). */
   gridShare: number;
-  pick: 'all' | 'chop' | 'move';
+  pick: 'all' | 'chop' | 'move' | 'splitTop' | 'splitBottom';
   k: number;
 }
 
@@ -58,6 +58,20 @@ async function main() {
             mixes.push({ name: `GRID ${step * 100}% ${share * 100}% + PANIC ${lev}x ${100 - share * 100}% · ${tag}`, grid: GRID(step), mr: MR(lev), gridShare: share, pick, k });
       }
   for (const lev of [3, 5]) mixes.push({ name: `PANIC ${lev}x only · all 15 coins`, mr: MR(lev), gridShare: 0, pick: 'all', k: symbols.length });
+  // Separate coins: on Binance one coin has one position, so grid and panic can't share a coin live.
+  // Coins ranked by last week's movement; panic takes the top `k`, grid the rest (or the reverse).
+  for (const step of [0.012, 0.02])
+    for (const lev of [3, 5])
+      for (const k of [5, 7, 10])
+        for (const panicTop of [true, false])
+          mixes.push({
+            name: `SPLIT grid ${step * 100}% + PANIC ${lev}x · panic on ${panicTop ? 'top' : 'bottom'} ${k} moving, grid rest`,
+            grid: GRID(step),
+            mr: MR(lev),
+            gridShare: 0.5,
+            pick: panicTop ? 'splitTop' : 'splitBottom',
+            k,
+          });
 
   const rows = mixes.map((m) => {
     let worstDrop = 0;
@@ -65,7 +79,7 @@ async function main() {
       const [from, to] = range(w);
       const idx = symbols.map((_, j) => j);
       const chosen =
-        m.pick === 'all'
+        m.pick === 'all' || m.pick === 'splitTop' || m.pick === 'splitBottom'
           ? idx
           : idx
               .map((j) => ({ j, s: m.pick === 'chop' ? chop(data[j], Math.max(0, from - WEEK), from) : move(data[j], Math.max(0, from - WEEK), from) }))
@@ -74,6 +88,23 @@ async function main() {
               .map((x) => x.j);
       let end = 0;
       let lows = 0;
+      if (m.pick === 'splitTop' || m.pick === 'splitBottom') {
+        const order = idx.map((j) => ({ j, s: move(data[j], Math.max(0, from - WEEK), from) })).sort((a, b) => b.s - a.s).map((x) => x.j);
+        const panic = m.pick === 'splitTop' ? order.slice(0, m.k) : order.slice(-m.k);
+        const grid = order.filter((j) => !panic.includes(j));
+        for (const j of grid) {
+          const [e, l] = simGrid(m.grid!, data[j], j, from, to, (capital * m.gridShare) / grid.length);
+          end += e;
+          lows += l;
+        }
+        for (const j of panic) {
+          const [e, l] = simPos(m.mr!, data[j], j, from, to, (capital * (1 - m.gridShare)) / panic.length);
+          end += e;
+          lows += l;
+        }
+        worstDrop = Math.max(worstDrop, 1 - lows / capital);
+        return end - capital;
+      }
       for (const j of chosen) {
         if (m.grid && m.gridShare > 0) {
           const [e, l] = simGrid(m.grid, data[j], j, from, to, (capital * m.gridShare) / chosen.length);

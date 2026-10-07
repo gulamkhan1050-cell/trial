@@ -1,6 +1,7 @@
 import { type GridGenome, takeProfitSteps } from '../core/grid';
 import type { LogEntry } from '../core/types';
 import { BinanceError } from './binance';
+import { type PanicConfig, PanicSleeve, type PanicState } from './panic';
 import { BOT_TAG, type ExchangeClient, type ExOrder, roundDown, roundTo, type SymbolRules } from './types';
 
 /**
@@ -42,6 +43,8 @@ export interface LiveConfig {
   dailyTarget: number;
   /** At the target: 'pause' = only sell until tomorrow; 'restart' = sell everything now (take the profit) and start a fresh round. */
   afterTarget?: 'pause' | 'restart';
+  /** Panic-buy strategy on its own coins with a share of the budget (the grid gets the rest). Off when absent. */
+  panic?: PanicConfig;
 }
 
 // A coin that hit its stop is usually still falling: stay out of it for 4 hours, not 30 minutes.
@@ -96,6 +99,7 @@ export interface LiveSnapshot {
   bankedRounds?: number;
   coins: LiveCoin[];
   cooldown: [string, number][];
+  panic?: PanicState;
 }
 
 /** Retiring a flat coin waits this long after (re)start, so FORGE can re-judge its grids first. */
@@ -139,6 +143,8 @@ export class LiveGrid {
   private foreign = new Set<string>();
   /** Latest prices from the exchange itself (grid levels must sit on the venue's own book). */
   private px: Record<string, number> = {};
+  /** The panic-buy strategy (cfg.panic), or one rebuilt from a snapshot so its positions can be closed. */
+  panic: PanicSleeve | null = null;
 
   constructor(
     readonly ex: ExchangeClient,
@@ -162,6 +168,8 @@ export class LiveGrid {
     if (this.budget < 10) throw new Error(`only $${b.available.toFixed(2)} available in the futures wallet`);
     this.baseBudget = resume?.baseBudget ?? this.budget;
     this.rules = await this.ex.rules(this.universe);
+    if (this.cfg.panic || resume?.panic?.pos?.length)
+      this.panic = new PanicSleeve(this.ex, this.cfg.panic ?? { share: 0, coins: 1, win: 480, k: 3.6, stop: 0.08 }, this.cfg.leverage, (k, t, p) => this.host.log(k, t, p), this.now);
     if (resume) this.restore(resume);
     await this.ex.ensureOneWay().catch(async (e) => {
       // Our own leftovers can block the switch: clean them first, then retry once.
@@ -209,6 +217,7 @@ export class LiveGrid {
       bankedRounds: this.bankedRounds,
       coins: [...this.coins.values()],
       cooldown: [...this.cooldown],
+      panic: this.panic?.snapshot(),
     };
   }
 
@@ -229,7 +238,8 @@ export class LiveGrid {
       this.coins.set(c.symbol, { ...c, rules: this.rules[c.symbol], levels: c.levels.map((l) => ({ ...l })) });
       this.setupDone.add(c.symbol);
     }
-    this.resumed = this.coins.size;
+    this.panic?.restore(s.panic);
+    this.resumed = this.coins.size + (this.panic?.pos.size ?? 0);
     this.reconcilePending = this.resumed > 0;
   }
 
@@ -252,6 +262,7 @@ export class LiveGrid {
         await this.flatten(c, 'closed while offline (flat)');
       }
     }
+    await this.panic?.reconcile();
   }
 
   /**
@@ -260,14 +271,15 @@ export class LiveGrid {
    */
   private async cleanLeftovers() {
     const open = await this.ex.openOrders();
-    const ours = new Set(open.filter((o) => o.clientOrderId?.startsWith(BOT_TAG) && !this.coins.has(o.symbol)).map((o) => o.symbol));
+    const ours = new Set(open.filter((o) => o.clientOrderId?.startsWith(BOT_TAG) && !this.coins.has(o.symbol) && !this.panic?.pos.has(o.symbol)).map((o) => o.symbol));
     for (const sym of ours) {
       await this.ex.cancelAll(sym);
       await this.ex.marketClose(sym);
       this.host.log('info', `LIVE ${sym}: cleaned up orders left by an earlier session`);
     }
     for (const o of open) {
-      if (o.clientOrderId?.startsWith(BOT_TAG) || this.foreign.has(o.symbol)) continue;
+      // The panic strategy's own stop orders carry Binance's id, not ours.
+      if (o.clientOrderId?.startsWith(BOT_TAG) || this.foreign.has(o.symbol) || this.panic?.pos.has(o.symbol)) continue;
       this.foreign.add(o.symbol);
       this.host.log('warn', `LIVE ${o.symbol}: has orders you placed yourself — the bot won't trade it`);
     }
@@ -299,6 +311,7 @@ export class LiveGrid {
           return;
         }
       }
+      await this.panic?.closeAll('profit taken');
       const b = await this.ex.balance();
       this.wallet = b.wallet;
       this.available = b.available;
@@ -320,7 +333,7 @@ export class LiveGrid {
 
   /** Per-coin notional (margin × leverage). */
   slice(): number {
-    return (this.budget * this.cfg.leverage) / this.cfg.maxCoins;
+    return (this.budget * (1 - (this.cfg.panic?.share ?? 0)) * this.cfg.leverage) / this.cfg.maxCoins;
   }
 
   /** How many grid levels a coin can afford given its exchange minimum order size. */
@@ -342,6 +355,7 @@ export class LiveGrid {
         this.lastBalance = this.now();
         let open = 0;
         for (const c of this.coins.values()) if (inventory(c) > 0) open += (await this.ex.position(c.symbol)).unrealized;
+        for (const p of this.panic?.pos.values() ?? []) open += (await this.ex.position(p.symbol)).unrealized;
         this.unrealized = open;
         if (this.cfg.compound) {
           // New ladders are sized from the grown (or shrunk) budget; running ones keep their size.
@@ -384,6 +398,11 @@ export class LiveGrid {
           this.cooldown.set(c.symbol, this.now() + this.cfg.cooldownMs);
           continue;
         }
+        // More coins than allowed (fewer grid coins in a new profile, panic buy wanting one): let a flat one go.
+        if (!holding && (this.coins.size > this.coinLimit() || this.panic?.set.includes(c.symbol))) {
+          await this.flatten(c, 'coin handed back (flat)');
+          continue;
+        }
         const champ = candidates.find((x) => x.symbol === c.symbol);
         if (!holding && !champ && this.now() - this.startedAt > RETIRE_GRACE_MS) {
           await this.flatten(c, 'FORGE retired its grid (flat)');
@@ -397,9 +416,17 @@ export class LiveGrid {
         }
       }
 
+      if (this.panic && this.cfg.panic) await this.panic.maybePick(candidates.map((x) => x.symbol).filter((x) => !this.foreign.has(x)), new Set(this.coins.keys()), this.rules, this.budget);
       if (!stressed && !this.locked) await this.allocate(candidates);
       for (const c of this.coins.values()) await this.place(c);
       for (const c of this.coins.values()) await this.protect(c);
+      if (this.panic && this.cfg.panic)
+        await this.panic.tick({
+          px: this.px,
+          budget: this.budget,
+          rules: this.rules,
+          locked: this.locked,
+        });
       this.lastError = '';
     } catch (e) {
       this.lastError = (e as Error).message;
@@ -420,7 +447,7 @@ export class LiveGrid {
     for (const cand of candidates) {
       if (this.coins.size >= limit) break;
       if (cand.regime === 'down') continue;
-      if (this.coins.has(cand.symbol) || this.foreign.has(cand.symbol)) continue;
+      if (this.coins.has(cand.symbol) || this.foreign.has(cand.symbol) || this.panic?.owns(cand.symbol)) continue;
       if ((this.cooldown.get(cand.symbol) ?? 0) > this.now()) continue;
       if (this.levelsFor(cand.symbol, cand.genome) < 1) continue; // exchange minimum too big for our slice
       const px = this.px[cand.symbol];
@@ -574,6 +601,7 @@ export class LiveGrid {
         this.host.log('warn', `LIVE kill ${c.symbol} failed: ${(e as Error).message} — check Binance manually`);
       }
     }
+    await this.panic?.closeAll(reason);
     this.host.log('veto', `■ LIVE trading stopped: ${reason}`);
   }
 }

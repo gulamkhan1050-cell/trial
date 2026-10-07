@@ -82,12 +82,14 @@ async function main() {
       process.exit(3);
     }
     const coins = [...live.coins.values()].map((c) => `${c.symbol.replace('USDT', '')} ${c.levels.filter((l) => l.side === 'sell').length}/${c.levels.length}`);
+    const p = live.panic;
+    const panic = p ? ` · panic ${p.set.map((x) => `${x.replace('USDT', '')}${p.pos.has(x) ? '●' : ''}`).join(' ')} (${p.trades} done)` : '';
     // The wallet only moves when Binance realizes profit — against the position's AVERAGE entry — so
     // it lags the grid's own per-level booking. Wallet + open-position value is the true result.
     const total = live.wallet - live.startWallet + live.unrealized;
     const days = Math.max((Date.now() - live.since) / 86_400_000, 1 / 24);
     say(
-       `TOTAL ${money(total)} (${money(total / days)}/day) · today ${money(live.today)}${live.locked ? ' 🔒 banked' : ''} · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · budget $${live.budget.toFixed(0)} · ${coins.join('  ') || 'waiting for FORGE'}`,
+       `TOTAL ${money(total)} (${money(total / days)}/day) · today ${money(live.today)}${live.locked ? ' 🔒 banked' : ''} · wallet $${live.wallet.toFixed(2)} · held coins ${money(live.unrealized)} · round trips ${live.roundTrips} · budget $${live.budget.toFixed(0)} · ${coins.join('  ') || 'waiting for FORGE'}${panic}`,
     );
     engine.save();
   }, 60_000);
@@ -100,7 +102,7 @@ async function killAll(s: LiveSettings, universe: string[]) {
   const live = new LiveGrid(
     new BinanceFutures(s.apiKey, s.apiSecret, s.network),
     { candidates: () => [], stressed: () => false, log: (_k, t) => say(t) },
-    { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins },
+    { ...DEFAULT_LIVE, maxCapital: s.maxCapital, leverage: s.leverage, maxCoins: s.maxCoins, panic: s.panic },
     universe,
   );
   await live.start(snap);

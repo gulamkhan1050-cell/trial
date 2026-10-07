@@ -229,6 +229,24 @@ export class BinanceFutures implements ExchangeClient {
     });
   }
 
+  async marketOpen(symbol: string, side: 'BUY' | 'SELL', qty: number) {
+    const r = await this.signed<RawOrder>('POST', '/fapi/v1/order', {
+      symbol,
+      side,
+      type: 'MARKET',
+      quantity: qty,
+      newOrderRespType: 'RESULT',
+      newClientOrderId: `${BOT_TAG}${Date.now().toString(36)}${(this.seq++).toString(36)}`,
+    });
+    const o = toOrder(r);
+    return { qty: o.executedQty || qty, avgPrice: o.avgPrice || o.price };
+  }
+
+  async closes(symbol: string, interval: '1m' | '1h', limit: number): Promise<number[]> {
+    const rows = await this.public<[number, string, string, string, string][]>('/fapi/v1/klines', { symbol, interval, limit: limit + 1 });
+    return rows.slice(0, -1).map((r) => +r[4]); // drop the candle still forming
+  }
+
   async cancel(symbol: string, orderId: number) {
     await this.signed('DELETE', '/fapi/v1/order', { symbol, orderId });
   }

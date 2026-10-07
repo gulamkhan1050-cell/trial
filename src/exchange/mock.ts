@@ -138,6 +138,20 @@ export class MockExchange implements ExchangeClient {
     this.fill(symbol, p.qty > 0 ? 'SELL' : 'BUY', Math.abs(p.qty), this.px[symbol], this.taker);
   }
 
+  async marketOpen(symbol: string, side: 'BUY' | 'SELL', qty: number) {
+    this.calls.push(`MARKET ${side} ${symbol} ${qty}`);
+    const px = this.px[symbol];
+    this.fill(symbol, side, qty, px, this.taker);
+    return { qty, avgPrice: px };
+  }
+
+  /** Finished candles' closes per symbol and interval, oldest first (tests set them). */
+  candles: Record<string, number[]> = {};
+
+  async closes(symbol: string, interval: '1m' | '1h', limit: number) {
+    return (this.candles[`${symbol}|${interval}`] ?? []).slice(-limit);
+  }
+
   async cancel(_symbol: string, orderId: number) {
     const o = this.orders.get(orderId);
     if (o && o.status === 'NEW') o.status = 'CANCELED';
