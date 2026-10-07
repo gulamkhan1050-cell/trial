@@ -21,6 +21,24 @@ function engineWithChampion(patch = {}) {
 describe('LiveController', () => {
   afterEach(() => vi.useRealTimers());
 
+  it("the paper simulation's own losses don't block real coins on the fixed grid; market vetoes still do", () => {
+    const fixed = engineWithChampion({ grid: { ...DEFAULT_SETTINGS.grid, fixed: { spacing: 0.012, levels: 8, stop: 0.012 } } });
+    const slot = fixed.grids.get('DOGEUSDT')!;
+    const host = new LiveController(fixed).host();
+    slot.why = 'daily loss limit hit';
+    expect(host.candidates().map((c) => c.symbol)).toEqual(['DOGEUSDT']);
+    slot.why = 'cooldown 12 bars after stop';
+    expect(host.candidates()).toHaveLength(1);
+    slot.why = 'selling off too hard for a grid';
+    expect(host.candidates()).toHaveLength(0);
+    slot.why = 'crash guard: market-wide sell-off, paused 20 more bars';
+    expect(host.candidates()).toHaveLength(0);
+    // The searched (non-fixed) grid keeps the old behaviour.
+    const searched = engineWithChampion();
+    searched.grids.get('DOGEUSDT')!.why = 'daily loss limit hit';
+    expect(new LiveController(searched).host().candidates()).toHaveLength(0);
+  });
+
   it('refuses to start outside the live grid setup', async () => {
     const ex = new MockExchange(RULES, 100);
     const replay = new LiveController(engineWithChampion({ feed: 'replay' }), () => ex);

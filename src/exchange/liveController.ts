@@ -104,6 +104,15 @@ function saveSnapshot(s: LiveSettings, snap: LiveSnapshot | null) {
   }
 }
 
+/**
+ * Vetoes that come from the paper simulation's own money (its daily loss limit, its cooldown after a paper stop,
+ * its banked target), not from the market. With the fixed grid they must not stop the real bot: it has its own
+ * loss limit, cooldown and take-profit. Market vetoes (crash guard, a coin selling off, a downtrend) still apply.
+ */
+export function paperOnly(why: string): boolean {
+  return /daily loss limit|cooldown|daily target/.test(why);
+}
+
 export type LiveStatus = 'off' | 'starting' | 'running' | 'killed' | 'error';
 
 export class LiveController {
@@ -126,7 +135,7 @@ export class LiveController {
       // Coins FORGE rates and SENTRY allows, never one in a downtrend; rising coins first, then best score.
       candidates: (): LiveCandidate[] =>
         [...e.grids.values()]
-          .filter((g) => g.forge.champion && (g.bot?.armed || !g.why) && !(e.settings.grid.regime && g.regime?.regime === 'down'))
+          .filter((g) => g.forge.champion && (g.bot?.armed || !g.why || (e.settings.grid.fixed && paperOnly(g.why))) && !(e.settings.grid.regime && g.regime?.regime === 'down'))
           .map((g) => ({ symbol: g.symbol, genome: g.forge.champion!.genome, score: g.forge.champion!.test.profit, regime: g.regime?.regime }))
           .sort((a, b) => Number(b.regime === 'up') - Number(a.regime === 'up') || b.score - a.score),
       breadth: () => (e.settings.grid.regime ? e.marketBreadth() : 1),
