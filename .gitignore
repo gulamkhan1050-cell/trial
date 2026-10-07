@@ -31,3 +31,7 @@ hunt-cache.bin.json
 hunt-run/
 dist-combo/
 combo-report.txt
+# Extra bot accounts (e.g. a demo run next to the real one)
+bot.*.json
+bot-*-state.json
+bot-*-state.json.tmp
