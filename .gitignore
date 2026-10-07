@@ -29,3 +29,5 @@ hunt-report.txt
 hunt-cache.bin
 hunt-cache.bin.json
 hunt-run/
+dist-combo/
+combo-report.txt

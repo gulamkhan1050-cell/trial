@@ -16,14 +16,14 @@ import { WIDE_MARKETS } from '../src/core/engine';
 const capital = Number(process.argv[2]) || 500;
 const TARGET = Number(process.argv[3]) || 100;
 const WEEKS = 16; // 8 searched + 8 unseen
-const WEEK = 7 * 1440;
+export const WEEK = 7 * 1440;
 const WARM = 3000;
 const CACHE = process.env.HUNT_CACHE || 'hunt-cache.bin';
 const SAMPLES = Number(process.env.HUNT_SAMPLES) || 6000;
 const MAKER = 0.0002;
 const TAKER = 0.0005;
 
-interface Bars { o: Float64Array; h: Float64Array; l: Float64Array; c: Float64Array; v: Float64Array; t: Float64Array }
+export interface Bars { o: Float64Array; h: Float64Array; l: Float64Array; c: Float64Array; v: Float64Array; t: Float64Array }
 
 async function download(symbol: string, bars: number): Promise<number[][]> {
   const out: number[][] = [];
@@ -42,7 +42,7 @@ async function download(symbol: string, bars: number): Promise<number[][]> {
 }
 
 /** Binary cache: [coins, len] header then per coin t,o,h,l,c,v columns. */
-async function prices(): Promise<{ symbols: string[]; data: Bars[] }> {
+export async function prices(): Promise<{ symbols: string[]; data: Bars[] }> {
   const need = WARM + WEEKS * WEEK;
   if (existsSync(CACHE)) {
     const buf = readFileSync(CACHE);
@@ -91,7 +91,7 @@ async function prices(): Promise<{ symbols: string[]; data: Bars[] }> {
 // ───────────────────────────── settings ─────────────────────────────
 
 type Family = 'grid' | 'meanrev' | 'breakout' | 'trend';
-interface P {
+export interface P {
   family: Family;
   lev: number;
   /** grid: 'long' | 'short' | 'neutral' | 'switch' (regime: up→long, chop→neutral, down→short). Others: 'long' | 'both'. */
@@ -144,7 +144,7 @@ function mutate(p: P, r: () => number): P {
   return q;
 }
 
-function label(p: P): string {
+export function label(p: P): string {
   const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
   if (p.family === 'grid') return `GRID ${p.side} ${p.lev}x · step ${pct(p.step)} · ${p.levels} lv`;
   if (p.family === 'meanrev') return `MEANREV ${p.side} ${p.lev}x · ${p.win}m avg · ${p.k.toFixed(2)}σ · stop ${p.stop ? pct(p.stop) : '-'}`;
@@ -236,7 +236,7 @@ function regime(b: Bars, coin: number, n: number): Int8Array {
 // ───────────────────────────── simulators: one coin, one week ─────────────────────────────
 
 /** Returns the coin's equity at the end of [from, to) starting from `cash`, and its lowest equity. */
-function simGrid(p: P, b: Bars, coin: number, from: number, to: number, cash0: number): [number, number] {
+export function simGrid(p: P, b: Bars, coin: number, from: number, to: number, cash0: number): [number, number] {
   const reg = p.side === 'switch' ? regime(b, coin, p.win) : null;
   const N = p.levels;
   const step = p.step;
@@ -308,7 +308,7 @@ function simGrid(p: P, b: Bars, coin: number, from: number, to: number, cash0: n
 }
 
 /** Single position strategies (meanrev / breakout / trend): market orders, taker fee, liquidation at 1/lev. */
-function simPos(p: P, b: Bars, coin: number, from: number, to: number, cash0: number): [number, number] {
+export function simPos(p: P, b: Bars, coin: number, from: number, to: number, cash0: number): [number, number] {
   let cash = cash0;
   let side = 0;
   let entry = 0;
@@ -478,7 +478,9 @@ async function main() {
   writeFileSync(process.env.HUNT_OUT || 'hunt-report.txt', report);
 }
 
-main().catch((e) => {
-  console.error('✕', (e as Error).message);
-  process.exit(1);
-});
+// Only when run as the hunt itself (combo.ts imports the simulators from here).
+if (process.argv[1]?.includes('hunt'))
+  main().catch((e) => {
+    console.error('✕', (e as Error).message);
+    process.exit(1);
+  });
