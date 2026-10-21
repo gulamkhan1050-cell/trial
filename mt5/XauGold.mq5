@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//| XauPullback.mq5                                                  |
+//| XauGold.mq5                                                      |
 //| XAUUSD trend-pullback EA for MetaTrader 5.                       |
 //|                                                                  |
 //| Trend:  higher timeframe EMA fast vs slow, fast EMA sloping.     |
@@ -14,8 +14,8 @@
 //|         London open, stop at the range middle, one trade a day.  |
 //+------------------------------------------------------------------+
 #property copyright "trial"
-#property version   "1.00"
-#property description "XAUUSD trend pullback with ATR stops, trailing and hard risk limits"
+#property version   "2.00"
+#property description "XAUUSD Asian-range breakout (default) or trend pullback, with ATR stops, trailing and hard risk limits"
 
 #include <Trade\Trade.mqh>
 
@@ -26,7 +26,7 @@ enum ENUM_XP_STRATEGY
   };
 
 input group "Mode"
-input ENUM_XP_STRATEGY InpStrategy = XP_PULLBACK; // Strategy
+input ENUM_XP_STRATEGY InpStrategy = XP_BREAKOUT; // Strategy
 
 input group "Risk"
 input double InpRiskPct       = 1.0;    // Risk per trade, % of equity
@@ -99,16 +99,16 @@ int OnInit()
    hAtr  = iATR(_Symbol, _Period, InpAtrPeriod);
    if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE || hPull == INVALID_HANDLE || hAtr == INVALID_HANDLE)
      {
-      Print("XauPullback: failed to create indicator handles");
+      Print("XauGold: failed to create indicator handles");
       return INIT_FAILED;
      }
    if(StringFind(_Symbol, "XAU") < 0 && StringFind(_Symbol, "GOLD") < 0)
-      Print("XauPullback: built and tuned for XAUUSD, attached to ", _Symbol);
+      Print("XauGold: built and tuned for XAUUSD, attached to ", _Symbol);
    if(PeriodSeconds(_Period) >= PeriodSeconds(InpTrendTF))
-      Print("XauPullback: chart timeframe should be lower than the trend timeframe (use M5 or M15)");
+      Print("XauGold: chart timeframe should be lower than the trend timeframe (use M5 or M15)");
 
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   PrintFormat("XauPullback: contract size %.2f, tick value %g, min lot %.2f -> a $1 move at min lot = %.2f %s",
+   PrintFormat("XauGold: contract size %.2f, tick value %g, min lot %.2f -> a $1 move at min lot = %.2f %s",
                SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE), SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE),
                minLot, minLot * LossPerLot(1.0), AccountInfoString(ACCOUNT_CURRENCY));
 
@@ -396,8 +396,8 @@ void Enter(int dir, double dist, string when)
       return;
      }
 
-   bool ok = dir > 0 ? trade.Buy(lots, _Symbol, 0.0, sl, tp, "XauPullback")
-             : trade.Sell(lots, _Symbol, 0.0, sl, tp, "XauPullback");
+   bool ok = dir > 0 ? trade.Buy(lots, _Symbol, 0.0, sl, tp, "XauGold")
+             : trade.Sell(lots, _Symbol, 0.0, sl, tp, "XauGold");
    if(ok && (trade.ResultRetcode() == TRADE_RETCODE_DONE || trade.ResultRetcode() == TRADE_RETCODE_PLACED))
      {
       // Remember the initial risk so breakeven/trailing measure R correctly after the stop moves.
