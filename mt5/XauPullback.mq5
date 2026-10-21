@@ -64,6 +64,11 @@ struct DayStats
    int               lossStreak;
   };
 
+DayStats gDay;
+bool     gDayDirty = true;   // set when a deal is added; history is re-read only then
+int      gDayKey   = -1;
+datetime gLastPanel = 0;
+
 //+------------------------------------------------------------------+
 int OnInit()
   {
@@ -108,8 +113,15 @@ void OnTick()
   {
    double atr = Buf(hAtr, 1);
 
-   DayStats d;
-   GetDay(d);
+   MqlDateTime t;
+   TimeToStruct(TimeCurrent(), t);
+   if(gDayDirty || t.day_of_year != gDayKey)
+     {
+      GetDay(gDay);
+      gDayDirty = false;
+      gDayKey = t.day_of_year;
+     }
+   DayStats d = gDay;
    double floating = Floating();
    double startBal = AccountInfoDouble(ACCOUNT_BALANCE) - d.realized;
    double dayPnl   = d.realized + floating;
@@ -124,8 +136,6 @@ void OnTick()
    if(gHalt == "daily loss limit" && HasPosition())
       CloseAll("daily loss limit");
 
-   MqlDateTime t;
-   TimeToStruct(TimeCurrent(), t);
    if(InpCloseFriday && t.day_of_week == 5 && t.hour >= InpFridayClose && HasPosition())
       CloseAll("weekend close");
 
@@ -139,8 +149,20 @@ void OnTick()
       EvaluateEntry(atr, d);
      }
 
-   if(InpShowPanel)
+   // The panel is skipped in non-visual tests and redrawn at most once a second.
+   bool canShow = !MQLInfoInteger(MQL_TESTER) || MQLInfoInteger(MQL_VISUAL_MODE);
+   if(InpShowPanel && canShow && TimeCurrent() != gLastPanel)
+     {
+      gLastPanel = TimeCurrent();
       UpdatePanel(atr, d, dayPnl, dayPct);
+     }
+  }
+
+//+------------------------------------------------------------------+
+void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result)
+  {
+   if(trans.type == TRADE_TRANSACTION_DEAL_ADD)
+      gDayDirty = true;
   }
 
 //+------------------------------------------------------------------+
