@@ -86,12 +86,10 @@ int OnInit()
    if(PeriodSeconds(_Period) >= PeriodSeconds(InpTrendTF))
       Print("XauPullback: chart timeframe should be lower than the trend timeframe (use M5 or M15)");
 
-   double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-   PrintFormat("XauPullback: contract size %.2f, tick size %g, tick value %g, min lot %.2f -> a $1 move at min lot = %.2f %s",
-               SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE), ts, tv, minLot,
-               ts > 0 ? minLot / ts * tv : 0.0, AccountInfoString(ACCOUNT_CURRENCY));
+   PrintFormat("XauPullback: contract size %.2f, tick value %g, min lot %.2f -> a $1 move at min lot = %.2f %s",
+               SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE), SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE),
+               minLot, minLot * LossPerLot(1.0), AccountInfoString(ACCOUNT_CURRENCY));
 
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetTypeFillingBySymbol(_Symbol);
@@ -369,17 +367,31 @@ string RKey(ulong id) { return "XP_R_" + IntegerToString((long)InpMagic) + "_" +
 double LotsForRisk(double dist, double &riskPct)
   {
    riskPct = 0;
-   double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
-   double tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
-   if(tv <= 0)
-      tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double perLot = LossPerLot(dist);
    double eq = AccountInfoDouble(ACCOUNT_EQUITY);
-   if(ts <= 0 || tv <= 0 || eq <= 0)
+   if(perLot <= 0 || eq <= 0)
       return 0;
-   double perLot = dist / ts * tv;
    double lots = NormLots(eq * InpRiskPct / 100.0 / perLot);
    riskPct = lots * perLot / eq * 100.0;
    return lots;
+  }
+
+//+------------------------------------------------------------------+
+//| Money lost by 1 lot over a price distance. Asks the terminal's   |
+//| own profit formula, because some servers publish a wrong tick    |
+//| value (MetaQuotes-Demo XAUUSD: 0.1 where contract 100 gives 1).  |
+//+------------------------------------------------------------------+
+double LossPerLot(double dist)
+  {
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double p = 0;
+   if(price > dist && OrderCalcProfit(ORDER_TYPE_BUY, _Symbol, 1.0, price, price - dist, p) && p < 0)
+      return -p;
+   // Fallback: the larger of the two estimates, so risk is never understated.
+   double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double byTick = ts > 0 ? dist / ts * tv : 0.0;
+   return MathMax(byTick, dist * SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE));
   }
 
 //+------------------------------------------------------------------+
