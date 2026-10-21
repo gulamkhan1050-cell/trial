@@ -86,6 +86,13 @@ int OnInit()
    if(PeriodSeconds(_Period) >= PeriodSeconds(InpTrendTF))
       Print("XauPullback: chart timeframe should be lower than the trend timeframe (use M5 or M15)");
 
+   double ts = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   PrintFormat("XauPullback: contract size %.2f, tick size %g, tick value %g, min lot %.2f -> a $1 move at min lot = %.2f %s",
+               SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE), ts, tv, minLot,
+               ts > 0 ? minLot / ts * tv : 0.0, AccountInfoString(ACCOUNT_CURRENCY));
+
    trade.SetExpertMagicNumber(InpMagic);
    trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetDeviationInPoints(30);
