@@ -17,6 +17,17 @@ One strategy, testable end to end, with risk limits the strategy cannot override
 | Ceiling | at most 6 entries a day. This is a limit, not a target: on a quiet day the bot may trade zero times |
 | Filters | spread > $0.40, outside 10:00–22:00 server time, Friday after 20:00, ±30 min around high-impact USD news |
 
+**Second strategy** (Inputs → `InpStrategy` = Asian-range breakout): the high/low of 02:00–10:00 server time is the Asian
+range. From London open until 14:00, the first M5 close beyond the range (plus 0.1 ATR) enters in that direction, stop at
+the middle of the range, target 2R, one trade a day, closed at 22:00 if still open. Stops under $2 or over $15 are skipped.
+
+## Test results so far
+
+| Test (2025-06-01 → 2026-10-01, real ticks) | Trades | Profit factor | Max drawdown | Verdict |
+|---|---|---|---|---|
+| Pullback M5, $100 | 94 | 0.86 | 35% | fail; stopped trading once 0.01 lot exceeded the 3% cap |
+| Pullback M5, $10,000 | 1244 | 0.93 | 54% | fail; no edge (48% wins at ~1:1) |
+
 The panel in the top-left corner shows trend, signal, ATR, spread, session, news, the open position (entry, SL, TP, current R),
 today's P/L, entry count, loss streak and the reason for the last skipped trade. Buy and sell arrows mark each setup on the chart.
 

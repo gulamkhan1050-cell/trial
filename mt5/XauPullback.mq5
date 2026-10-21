@@ -10,12 +10,23 @@
 //|         max entries per day (a ceiling, not a target), spread,   |
 //|         session hours, high-impact USD news, Friday close.       |
 //| Panel:  live on-chart status of all of the above.                |
+//| Mode XP_BREAKOUT: first M5 close outside the Asian range after   |
+//|         London open, stop at the range middle, one trade a day.  |
 //+------------------------------------------------------------------+
 #property copyright "trial"
 #property version   "1.00"
 #property description "XAUUSD trend pullback with ATR stops, trailing and hard risk limits"
 
 #include <Trade\Trade.mqh>
+
+enum ENUM_XP_STRATEGY
+  {
+   XP_PULLBACK = 0,   // Trend pullback (M5 entries, H1 trend)
+   XP_BREAKOUT = 1    // Asian-range breakout at London open
+  };
+
+input group "Mode"
+input ENUM_XP_STRATEGY InpStrategy = XP_PULLBACK; // Strategy
 
 input group "Risk"
 input double InpRiskPct       = 1.0;    // Risk per trade, % of equity
@@ -34,6 +45,15 @@ input double InpSlAtr         = 1.5;    // Stop distance in ATRs
 input double InpTpR           = 2.0;    // Take profit in R (0 = no TP, trailing only)
 input double InpBeAtR         = 1.0;    // Move stop to breakeven at this many R
 input double InpTrailAtr      = 2.0;    // Trailing distance in ATRs (after breakeven)
+
+input group "Breakout"
+input int    InpRangeStart    = 2;      // Asian range start hour (server time)
+input int    InpRangeEnd      = 10;     // Asian range end hour = London open (server time)
+input int    InpBoTradeEnd    = 14;     // No new breakout entries from this hour
+input int    InpBoExitHour    = 22;     // Close breakout positions at this hour
+input double InpBoBufferAtr   = 0.1;    // Close must clear the range by this many ATRs
+input double InpBoMinStop     = 2.0;    // Skip if stop (entry to range middle) is under this, $
+input double InpBoMaxStop     = 15.0;   // Skip if stop is over this, $
 
 input group "Filters"
 input double InpMaxSpread     = 0.40;   // Max spread in price ($ per ounce)
@@ -56,6 +76,7 @@ datetime gLastBar = 0;
 string   gSignal  = "waiting for first closed bar";
 string   gSkip    = "-";
 string   gHalt    = "";
+int      gBoDay   = -1;      // day_of_year of the last breakout signal (one per day)
 
 struct DayStats
   {
@@ -144,6 +165,9 @@ void OnTick()
    if(InpCloseFriday && t.day_of_week == 5 && t.hour >= InpFridayClose && HasPosition())
       CloseAll("weekend close");
 
+   if(InpStrategy == XP_BREAKOUT && t.hour >= InpBoExitHour && HasPosition())
+      CloseAll("breakout exit hour");
+
    if(atr != EMPTY_VALUE)
       ManagePositions(atr);
 
@@ -212,19 +236,92 @@ int PullbackSignal(int trend)
   }
 
 //+------------------------------------------------------------------+
+//| Asian range: high/low of the bars opening in [start, end) today. |
+//+------------------------------------------------------------------+
+bool AsianRange(double &hi, double &lo)
+  {
+   MqlDateTime t;
+   TimeToStruct(TimeCurrent(), t);
+   t.min = 0;
+   t.sec = 0;
+   t.hour = InpRangeStart;
+   datetime from = StructToTime(t);
+   t.hour = InpRangeEnd;
+   datetime to = StructToTime(t);
+   if(TimeCurrent() < to)
+      return false;
+   double h[], l[];
+   if(CopyHigh(_Symbol, _Period, from, to - 1, h) < 6 || CopyLow(_Symbol, _Period, from, to - 1, l) < 6)
+      return false;
+   hi = h[ArrayMaximum(h)];
+   lo = l[ArrayMinimum(l)];
+   return true;
+  }
+
+//+------------------------------------------------------------------+
+//| First close outside today's Asian range; stop at range middle.   |
+//+------------------------------------------------------------------+
+int BreakoutSignal(double atr, double &dist)
+  {
+   MqlDateTime t;
+   TimeToStruct(TimeCurrent(), t);
+   if(gBoDay == t.day_of_year)
+     {
+      gSignal = "breakout already taken today";
+      return 0;
+     }
+   double hi, lo;
+   if(!AsianRange(hi, lo))
+     {
+      gSignal = StringFormat("building Asian range %02d-%02d", InpRangeStart, InpRangeEnd);
+      return 0;
+     }
+   if(t.hour >= InpBoTradeEnd)
+     {
+      gSignal = StringFormat("breakout window closed (range %.2f-%.2f)", lo, hi);
+      return 0;
+     }
+   gSignal = StringFormat("range %.2f-%.2f, waiting for a break", lo, hi);
+   double c = iClose(_Symbol, _Period, 1), buf = InpBoBufferAtr * atr, mid = (hi + lo) / 2.0;
+   int sig = c > hi + buf ? 1 : c < lo - buf ? -1 : 0;
+   if(sig != 0)
+     {
+      gBoDay = t.day_of_year;
+      dist = sig > 0 ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) - mid : mid - SymbolInfoDouble(_Symbol, SYMBOL_BID);
+     }
+   return sig;
+  }
+
+//+------------------------------------------------------------------+
 void EvaluateEntry(double atr, DayStats &d)
   {
-   int trend = TrendDir();
-   if(trend == 0)
+   if(atr == EMPTY_VALUE || atr <= 0)
      {
-      gSignal = "no trend - standing aside";
+      gSignal = "ATR not ready";
       return;
      }
-   int sig = PullbackSignal(trend);
-   if(sig == 0)
+   int sig = 0;
+   double dist = InpSlAtr * atr;
+   if(InpStrategy == XP_BREAKOUT)
      {
-      gSignal = StringFormat("trend %s, waiting for pullback to EMA%d", trend > 0 ? "UP" : "DOWN", InpPullbackEMA);
-      return;
+      sig = BreakoutSignal(atr, dist);
+      if(sig == 0)
+         return;
+     }
+   else
+     {
+      int trend = TrendDir();
+      if(trend == 0)
+        {
+         gSignal = "no trend - standing aside";
+         return;
+        }
+      sig = PullbackSignal(trend);
+      if(sig == 0)
+        {
+         gSignal = StringFormat("trend %s, waiting for pullback to EMA%d", trend > 0 ? "UP" : "DOWN", InpPullbackEMA);
+         return;
+        }
      }
 
    string side = sig > 0 ? "BUY" : "SELL";
@@ -242,7 +339,7 @@ void EvaluateEntry(double atr, DayStats &d)
          if(d.entries >= InpMaxTradesDay)
             why = StringFormat("max %d entries today reached", InpMaxTradesDay);
          else
-            if(!InSession(why))
+            if(!InSession(why, InpStrategy == XP_PULLBACK))
               {}
             else
                if(NewsBlocked(why))
@@ -253,24 +350,23 @@ void EvaluateEntry(double atr, DayStats &d)
                   if(spread > InpMaxSpread)
                      why = StringFormat("spread %.2f > max %.2f", spread, InpMaxSpread);
                   else
-                     if(atr == EMPTY_VALUE || atr <= 0)
-                        why = "ATR not ready";
+                     if(InpStrategy == XP_BREAKOUT && (dist < InpBoMinStop || dist > InpBoMaxStop))
+                        why = StringFormat("stop %.2f outside %.2f-%.2f", dist, InpBoMinStop, InpBoMaxStop);
                  }
    if(why != "")
      {
       gSkip = side + " skipped " + when + ": " + why;
       return;
      }
-   Enter(sig, atr, when);
+   Enter(sig, dist, when);
   }
 
 //+------------------------------------------------------------------+
-void Enter(int dir, double atr, string when)
+void Enter(int dir, double dist, string when)
   {
    string side = dir > 0 ? "BUY" : "SELL";
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK), bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double price = dir > 0 ? ask : bid;
-   double dist = InpSlAtr * atr;
    double minDist = (SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) + 1) * _Point;
    if(dist < minDist)
      {
@@ -485,7 +581,7 @@ void CloseAll(string reason)
   }
 
 //+------------------------------------------------------------------+
-bool InSession(string &why)
+bool InSession(string &why, bool checkHours = true)
   {
    MqlDateTime t;
    TimeToStruct(TimeCurrent(), t);
@@ -499,7 +595,7 @@ bool InSession(string &why)
       why = "Friday cutoff";
       return false;
      }
-   if(t.hour < InpSessionStart || t.hour >= InpSessionEnd)
+   if(checkHours && (t.hour < InpSessionStart || t.hour >= InpSessionEnd))
      {
       why = StringFormat("outside session %02d-%02d", InpSessionStart, InpSessionEnd);
       return false;
@@ -598,12 +694,12 @@ void UpdatePanel(double atr, DayStats &d, double dayPnl, double dayPct)
    double spread = ask - bid;
    int trend = TrendDir();
    string sessWhy = "", newsWhat = "";
-   bool inSess = InSession(sessWhy);
+   bool inSess = InSession(sessWhy, InpStrategy == XP_PULLBACK);
    bool news = NewsBlocked(newsWhat);
    int row = 0;
 
    Background(11);
-   Row(row++, "XAU PULLBACK  " + _Symbol + "  " + (gHalt == "" ? "[ACTIVE]" : "[HALTED: " + gHalt + "]"),
+   Row(row++, (InpStrategy == XP_BREAKOUT ? "XAU BREAKOUT  " : "XAU PULLBACK  ") + _Symbol + "  " + (gHalt == "" ? "[ACTIVE]" : "[HALTED: " + gHalt + "]"),
        gHalt == "" ? good : bad);
    Row(row++, StringFormat("Trend %-5s  %s  (EMA%d vs EMA%d)", EnumToString(InpTrendTF), trend > 0 ? "UP" : trend < 0 ? "DOWN" : "NONE",
                            InpTrendFast, InpTrendSlow), trend > 0 ? good : trend < 0 ? bad : warn);
