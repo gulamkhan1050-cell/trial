@@ -94,7 +94,9 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
-   ObjectsDeleteAll(0, "XP_");
+   // Keep the panel and arrows on the tester chart so the finished run can be inspected.
+   if(!MQLInfoInteger(MQL_TESTER))
+      ObjectsDeleteAll(0, "XP_");
    IndicatorRelease(hFast);
    IndicatorRelease(hSlow);
    IndicatorRelease(hPull);
