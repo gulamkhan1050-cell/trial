@@ -10,11 +10,16 @@
 //|         max entries per day (a ceiling, not a target), spread,   |
 //|         session hours, high-impact USD news, Friday close.       |
 //| Panel:  live on-chart status of all of the above.                |
+//| Mode XP_FADE (default): in the quiet Asian hours, a closed M15   |
+//|         bar 3 standard deviations outside its 20-bar mean is     |
+//|         faded back toward the mean; 1.5 ATR stop, 1R target,     |
+//|         4-hour time exit. Chosen by walk-forward testing, see    |
+//|         research/RESULTS.md.                                     |
 //| Mode XP_BREAKOUT: first M5 close outside the Asian range after   |
 //|         London open, stop at the range middle, one trade a day.  |
 //+------------------------------------------------------------------+
 #property copyright "trial"
-#property version   "2.00"
+#property version   "3.00"
 #property description "XAUUSD Asian-range breakout (default) or trend pullback, with ATR stops, trailing and hard risk limits"
 
 #include <Trade\Trade.mqh>
@@ -22,11 +27,12 @@
 enum ENUM_XP_STRATEGY
   {
    XP_PULLBACK = 0,   // Trend pullback (M5 entries, H1 trend)
-   XP_BREAKOUT = 1    // Asian-range breakout at London open
+   XP_BREAKOUT = 1,   // Asian-range breakout at London open
+   XP_FADE     = 2    // Asian-session fade of 3-sigma M15 moves
   };
 
 input group "Mode"
-input ENUM_XP_STRATEGY InpStrategy = XP_BREAKOUT; // Strategy
+input ENUM_XP_STRATEGY InpStrategy = XP_FADE; // Strategy
 
 input group "Risk"
 input double InpRiskPct       = 1.0;    // Risk per trade, % of equity
@@ -55,8 +61,18 @@ input double InpBoBufferAtr   = 0.1;    // Close must clear the range by this ma
 input double InpBoMinStop     = 2.0;    // Skip if stop (entry to range middle) is under this, $
 input double InpBoMaxStop     = 15.0;   // Skip if stop is over this, $
 
+input group "Fade"
+input ENUM_TIMEFRAMES InpFadeTF = PERIOD_M15; // Fade signal timeframe
+input int    InpFadePeriod    = 20;     // Bars in the mean / standard deviation
+input double InpFadeK         = 3.0;    // Standard deviations a close must reach
+input double InpFadeSlAtr     = 1.5;    // Stop in ATRs of the fade timeframe
+input double InpFadeTpR       = 1.0;    // Target in R
+input int    InpFadeStart     = 2;      // First signal hour (server time, bar close)
+input int    InpFadeEnd       = 10;     // No signals from this hour (server time)
+input int    InpFadeMaxHours  = 4;      // Close a fade trade after this many hours
+
 input group "Filters"
-input double InpMaxSpread     = 0.40;   // Max spread in price ($ per ounce)
+input double InpMaxSpread     = 0.50;   // Max spread in price ($ per ounce)
 input int    InpSessionStart  = 10;     // Session start hour (server time)
 input int    InpSessionEnd    = 22;     // Session end hour (server time)
 input int    InpFridayCutoff  = 20;     // No new entries on Friday from this hour
@@ -77,6 +93,8 @@ string   gSignal  = "waiting for first closed bar";
 string   gSkip    = "-";
 string   gHalt    = "";
 int      gBoDay   = -1;      // day_of_year of the last breakout signal (one per day)
+int      hFadeAtr = INVALID_HANDLE;
+datetime gFadeBar = 0;
 
 struct DayStats
   {
@@ -97,7 +115,8 @@ int OnInit()
    hSlow = iMA(_Symbol, InpTrendTF, InpTrendSlow, 0, MODE_EMA, PRICE_CLOSE);
    hPull = iMA(_Symbol, _Period, InpPullbackEMA, 0, MODE_EMA, PRICE_CLOSE);
    hAtr  = iATR(_Symbol, _Period, InpAtrPeriod);
-   if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE || hPull == INVALID_HANDLE || hAtr == INVALID_HANDLE)
+   hFadeAtr = iATR(_Symbol, InpFadeTF, InpAtrPeriod);
+   if(hFast == INVALID_HANDLE || hSlow == INVALID_HANDLE || hPull == INVALID_HANDLE || hAtr == INVALID_HANDLE || hFadeAtr == INVALID_HANDLE)
      {
       Print("XauGold: failed to create indicator handles");
       return INIT_FAILED;
@@ -132,6 +151,7 @@ void OnDeinit(const int reason)
    IndicatorRelease(hSlow);
    IndicatorRelease(hPull);
    IndicatorRelease(hAtr);
+   IndicatorRelease(hFadeAtr);
   }
 
 //+------------------------------------------------------------------+
@@ -168,14 +188,26 @@ void OnTick()
    if(InpStrategy == XP_BREAKOUT && t.hour >= InpBoExitHour && HasPosition())
       CloseAll("breakout exit hour");
 
-   if(atr != EMPTY_VALUE)
-      ManagePositions(atr);
-
-   datetime bar = iTime(_Symbol, _Period, 0);
-   if(bar != gLastBar)
+   if(InpStrategy == XP_FADE)
      {
-      gLastBar = bar;
-      EvaluateEntry(atr, d);
+      ManageFade();
+      datetime fb = iTime(_Symbol, InpFadeTF, 0);
+      if(fb != gFadeBar && fb != 0)
+        {
+         gFadeBar = fb;
+         EvaluateEntry(Buf(hFadeAtr, 1), d);
+        }
+     }
+   else
+     {
+      if(atr != EMPTY_VALUE)
+         ManagePositions(atr);
+      datetime bar = iTime(_Symbol, _Period, 0);
+      if(bar != gLastBar)
+        {
+         gLastBar = bar;
+         EvaluateEntry(atr, d);
+        }
      }
 
    // The panel is skipped in non-visual tests and redrawn at most once a second.
@@ -293,6 +325,62 @@ int BreakoutSignal(double atr, double &dist)
   }
 
 //+------------------------------------------------------------------+
+//| Fade: last closed bar of InpFadeTF is InpFadeK sample standard   |
+//| deviations from the mean of the last InpFadePeriod closes        |
+//| (itself included), during the quiet hours. Returns the fade      |
+//| direction: +1 buy after a drop, -1 sell after a spike.           |
+//+------------------------------------------------------------------+
+int FadeSignal()
+  {
+   MqlDateTime t;
+   TimeToStruct(iTime(_Symbol, InpFadeTF, 0), t);  // = close time of the signal bar
+   if(t.hour < InpFadeStart || t.hour >= InpFadeEnd)
+     {
+      gSignal = StringFormat("fade hours %02d-%02d, standing aside", InpFadeStart, InpFadeEnd);
+      return 0;
+     }
+   double c[];
+   if(CopyClose(_Symbol, InpFadeTF, 1, InpFadePeriod, c) != InpFadePeriod)
+     {
+      gSignal = "fade: history not ready";
+      return 0;
+     }
+   double mean = 0, var = 0;
+   for(int i = 0; i < InpFadePeriod; i++)
+      mean += c[i];
+   mean /= InpFadePeriod;
+   for(int i = 0; i < InpFadePeriod; i++)
+      var += (c[i] - mean) * (c[i] - mean);
+   double sd = MathSqrt(var / (InpFadePeriod - 1));
+   double last = c[InpFadePeriod - 1];
+   double z = sd > 0 ? (last - mean) / sd : 0.0;
+   gSignal = StringFormat("fade: last close %+.1f sd from mean (needs %.1f)", z, InpFadeK);
+   if(z > InpFadeK)
+      return -1;
+   if(z < -InpFadeK)
+      return 1;
+   return 0;
+  }
+
+//+------------------------------------------------------------------+
+//| Fade exits are stop, target or time: no breakeven or trailing.   |
+//+------------------------------------------------------------------+
+void ManageFade()
+  {
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+     {
+      ulong tk = PositionGetTicket(i);
+      if(tk == 0 || !IsOurs())
+         continue;
+      if(TimeCurrent() - (datetime)PositionGetInteger(POSITION_TIME) >= InpFadeMaxHours * 3600)
+        {
+         trade.PositionClose(tk);
+         gSkip = StringFormat("fade closed after %d hours", InpFadeMaxHours);
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
 void EvaluateEntry(double atr, DayStats &d)
   {
    if(atr == EMPTY_VALUE || atr <= 0)
@@ -302,7 +390,16 @@ void EvaluateEntry(double atr, DayStats &d)
      }
    int sig = 0;
    double dist = InpSlAtr * atr;
-   if(InpStrategy == XP_BREAKOUT)
+   double tpR = InpTpR;
+   if(InpStrategy == XP_FADE)
+     {
+      sig = FadeSignal();
+      dist = InpFadeSlAtr * atr;
+      tpR = InpFadeTpR;
+      if(sig == 0)
+         return;
+     }
+   else if(InpStrategy == XP_BREAKOUT)
      {
       sig = BreakoutSignal(atr, dist);
       if(sig == 0)
@@ -358,11 +455,11 @@ void EvaluateEntry(double atr, DayStats &d)
       gSkip = side + " skipped " + when + ": " + why;
       return;
      }
-   Enter(sig, dist, when);
+   Enter(sig, dist, tpR, when);
   }
 
 //+------------------------------------------------------------------+
-void Enter(int dir, double dist, string when)
+void Enter(int dir, double dist, double tpR, string when)
   {
    string side = dir > 0 ? "BUY" : "SELL";
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK), bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -374,7 +471,7 @@ void Enter(int dir, double dist, string when)
       return;
      }
    double sl = NormPrice(dir > 0 ? price - dist : price + dist);
-   double tp = InpTpR > 0 ? NormPrice(dir > 0 ? price + InpTpR * dist : price - InpTpR * dist) : 0.0;
+   double tp = tpR > 0 ? NormPrice(dir > 0 ? price + tpR * dist : price - tpR * dist) : 0.0;
 
    double riskPct;
    double lots = LotsForRisk(dist, riskPct);
@@ -699,7 +796,7 @@ void UpdatePanel(double atr, DayStats &d, double dayPnl, double dayPct)
    int row = 0;
 
    Background(11);
-   Row(row++, (InpStrategy == XP_BREAKOUT ? "XAU BREAKOUT  " : "XAU PULLBACK  ") + _Symbol + "  " + (gHalt == "" ? "[ACTIVE]" : "[HALTED: " + gHalt + "]"),
+   Row(row++, (InpStrategy == XP_FADE ? "XAU FADE  " : InpStrategy == XP_BREAKOUT ? "XAU BREAKOUT  " : "XAU PULLBACK  ") + _Symbol + "  " + (gHalt == "" ? "[ACTIVE]" : "[HALTED: " + gHalt + "]"),
        gHalt == "" ? good : bad);
    Row(row++, StringFormat("Trend %-5s  %s  (EMA%d vs EMA%d)", EnumToString(InpTrendTF), trend > 0 ? "UP" : trend < 0 ? "DOWN" : "NONE",
                            InpTrendFast, InpTrendSlow), trend > 0 ? good : trend < 0 ? bad : warn);

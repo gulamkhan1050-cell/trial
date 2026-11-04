@@ -28,6 +28,10 @@ the middle of the range, target 2R, one trade a day, closed at 22:00 if still op
 | Pullback M5, $100 | 94 | 0.86 | 35% | fail; stopped trading once 0.01 lot exceeded the 3% cap |
 | Pullback M5, $10,000 | 1244 | 0.93 | 54% | fail; no edge (48% wins at ~1:1) |
 
+**v3.00 default: Asian-session fade** (`InpStrategy` = fade). In 02:00–10:00 server time, a closed M15 bar more than
+3 standard deviations from its 20-bar mean is faded: stop 1.5 ATR(M15), target 1R, closed after 4 hours. It is the only
+one of 8 strategy families that held up on data it was not tuned on; see `research/RESULTS.md`.
+
 The panel in the top-left corner shows trend, signal, ATR, spread, session, news, the open position (entry, SL, TP, current R),
 today's P/L, entry count, loss streak and the reason for the last skipped trade. Buy and sell arrows mark each setup on the chart.
 
